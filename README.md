@@ -47,13 +47,7 @@ Run from source:
 .\.venv\Scripts\python.exe .\gui\launchpad_mapper.py --preset empty
 ```
 
-Build installer (uses version from pyproject.toml):
-```powershell
-.\build_installer.ps1
-# Explicit version override
-.\build_installer.ps1 -VersionOverride 0.1.2
-```
-Or directly with Inno Setup:
+Build installer (requires Inno Setup 6):
 ```powershell
 "C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe" .\installer.iss
 ```
