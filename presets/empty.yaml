@@ -1,0 +1,11 @@
+animations: {}
+layer: main
+pads:
+  2,-1:
+    color: '#2980b9'
+    nav: prev
+    type: layer_nav
+  3,-1:
+    color: '#8e44ad'
+    nav: next
+    type: layer_nav
