@@ -356,6 +356,8 @@ class PadEditorDialog(FramelessPopup):
         # Launch app path + browse + pick installed
         self.launch_label = QLabel("Application Path (launch app):")
         self.launch_path = QLineEdit()
+        self.launch_args_label = QLabel("Arguments:")
+        self.launch_args = QLineEdit()
         self.launch_browse_btn = QPushButton("Browse…")
         self.launch_pick_btn = QPushButton("Pick Installed…")
         launch_row = QHBoxLayout()
@@ -365,6 +367,12 @@ class PadEditorDialog(FramelessPopup):
         layout.addWidget(self.launch_label)
         lrw = QWidget(); lrw.setLayout(launch_row)
         layout.addWidget(lrw)
+        # Arguments and elevation
+        args_row = QHBoxLayout()
+        args_row.addWidget(self.launch_args_label)
+        args_row.addWidget(self.launch_args, 1)
+        args_row_w = QWidget(); args_row_w.setLayout(args_row)
+        layout.addWidget(args_row_w)
         self.launch_browse_btn.clicked.connect(self._browse_launch_app)
         self.launch_pick_btn.clicked.connect(self._pick_installed_app)
         # Hotkey edit
@@ -409,6 +417,15 @@ class PadEditorDialog(FramelessPopup):
         self.color_btn = QPushButton("Pick Color")
         self.color_btn.clicked.connect(self.pick_color)
         layout.addWidget(self.color_btn)
+        # Color intensity
+        self.intensity_label = QLabel("Color intensity:")
+        self.intensity_select = QComboBox()
+        self.intensity_select.addItems(["low", "medium", "high"])  # default medium
+        inten_row = QHBoxLayout()
+        inten_row.addWidget(self.intensity_label)
+        inten_row.addWidget(self.intensity_select)
+        inten_w = QWidget(); inten_w.setLayout(inten_row)
+        layout.addWidget(inten_w)
         self.selected_color = None
         # Buttons
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -437,6 +454,9 @@ class PadEditorDialog(FramelessPopup):
             self.animation_label,
             self.animation_select,
             self.animation_loop_container,
+            args_row_w,
+            self.launch_args_label,
+            self.launch_args,
         ):
             w.setVisible(False)
         # Pre-fill existing mapping
@@ -463,6 +483,16 @@ class PadEditorDialog(FramelessPopup):
                     self.media_select.setCurrentIndex(idx)
             self.layer_select.setText(str(mapping.get("layer", "")))
             self.selected_color = mapping.get("color", None)
+            # Intensity default medium
+            inten = str(mapping.get("intensity", "medium")).lower()
+            if inten not in ("low","medium","high"):
+                try:
+                    # numeric legacy 1..3
+                    n = int(mapping.get("intensity"))
+                    inten = {1:"low",2:"medium",3:"high"}.get(n, "medium")
+                except Exception:
+                    inten = "medium"
+            self.intensity_select.setCurrentText(inten)
             if mtype in ("layer nav", "layer_nav"):
                 self.nav_label.setVisible(True)
                 self.nav_select.setVisible(True)
@@ -480,6 +510,8 @@ class PadEditorDialog(FramelessPopup):
                 self.animation_select.setVisible(True)
                 self.animation_loop_container.setVisible(True)
                 self.animation_loop_iterations.setValue(mapping.get("iterations", 0))  # Allow for 0 iterations
+            if mtype == "launch app":
+                self.launch_args.setText(str(mapping.get("args", "")))
         # Hook type change
         self.action_type.currentTextChanged.connect(self._on_type_changed)
         # Ensure visibility consistent with current type
@@ -516,6 +548,13 @@ class PadEditorDialog(FramelessPopup):
         is_switch = (text_norm == "switch layer")
         self.layer_label.setVisible(is_switch)
         self.layer_select.setVisible(is_switch)
+        # launch args
+        try:
+            self.launch_args_label.setVisible(is_launch)
+            self.launch_args.setVisible(is_launch)
+            self.launch_args.parentWidget().setVisible(is_launch)
+        except Exception:
+            pass
         # Adjust size so the dialog can shrink when controls hide
         try:
             # Nollställ minima för att tillåta krympning
@@ -546,7 +585,10 @@ class PadEditorDialog(FramelessPopup):
         if dlg.exec() == QDialog.Accepted:
             sel = dlg.get_selected()
             if sel:
-                self.launch_path.setText(sel)
+                path, args = sel
+                self.launch_path.setText(path)
+                if args:
+                    self.launch_args.setText(args)
 
 class _AppScanWorker(QThread):
     resultReady = Signal(list)
@@ -561,21 +603,21 @@ class _AppScanWorker(QThread):
                 self.resultReady.emit([])
                 return
             exts = {'.lnk', '.exe'}
-            entries: list[tuple[str,str,str|None,bool]] = []
+            entries: list[tuple[str,str,str|None,str,bool]] = []  # (label, fullPath, targetPath, args, is_link)
             seen_effective = set()
 
-            def add_entry(label: str, full: str, target: str | None, is_link: bool):
+            def add_entry(label: str, full: str, target: str | None, args: str, is_link: bool):
                 if not label:
                     return
                 eff = target or full
                 # Basic sanity on path
                 if not eff or not eff.lower().endswith('.exe'):
                     return
-                key = (label.lower(), eff.lower())
+                key = (label.lower(), eff.lower(), (args or '').lower())
                 if key in seen_effective:
                     return
                 seen_effective.add(key)
-                entries.append((label, full, target, is_link))
+                entries.append((label, full, target, args, is_link))
 
             # --- 1. Startmeny ---
             dirs = []
@@ -615,10 +657,12 @@ class _AppScanWorker(QThread):
                         try:
                             sc = shell.CreateShortcut(full)
                             target = sc.TargetPath or None
+                            args = sc.Arguments or ""
                         except Exception:
                             target = None
+                            args = ""
                     label = path.stem
-                    add_entry(label, full, target, is_link)
+                    add_entry(label, full, target, args if is_link else "", is_link)
 
             # --- 2. Registry Uninstall (Control Panel list) ---
             import winreg
@@ -681,7 +725,7 @@ class _AppScanWorker(QThread):
                                             else:
                                                 t = ''
                                         if t.lower().endswith('.exe'):
-                                            add_entry(name, t, t, False)
+                                            add_entry(name, t, t, "", False)
                                     # else: skip entries without path
                             except Exception:
                                 continue
@@ -711,7 +755,7 @@ class _AppScanWorker(QThread):
                             # Heuristik: välj största exe
                             pick = max(exes, key=lambda p: p.stat().st_size if p.exists() else 0)
                             label = subdir.name
-                            add_entry(label, str(pick), str(pick), False)
+                            add_entry(label, str(pick), str(pick), "", False)
                             if len(entries) > 60:  # begränsa fallback-volym
                                 break
                     except Exception:
@@ -749,8 +793,8 @@ class AppPickerDialog(QDialog):
         self.filter_edit.textChanged.connect(self._refilter)
         self.show_all_cb.toggled.connect(self._refilter)
         self.list.itemDoubleClicked.connect(lambda *_: self.accept())
-        self._raw_entries = []  # (label, full, target, is_link)
-        self._all_items: list[tuple[str,str]] = []  # (label, effective_path)
+        self._raw_entries = []  # list of tuples: (label, full, target, args, is_link)
+        self._all_items: list[tuple[str,str,str]] = []  # (label, effective_path, args)
         self._worker = _AppScanWorker(self)
         self._worker.resultReady.connect(self._on_scan_done)
         self._worker.start()
@@ -767,7 +811,7 @@ class AppPickerDialog(QDialog):
         cleaned = []
         allowed_sys = {"notepad.exe", "mspaint.exe", "calc.exe"}
         prog_dirs = [p.lower() for p in [os.environ.get('ProgramFiles'), os.environ.get('ProgramFiles(x86)')] if p]
-        for label, full, target, is_link in self._raw_entries:
+        for label, full, target, args, is_link in self._raw_entries:
             eff = (target or full)
             if not eff:
                 continue
@@ -785,15 +829,15 @@ class AppPickerDialog(QDialog):
             base = os.path.basename(low)
             if any(x in base.lower() for x in ("unins", "uninstall", "setup", "update", "crash", "debug")):
                 continue
-            cleaned.append((label, eff))
+            cleaned.append((label, eff, args or ""))
         # Remove dups by effective path keeping first label
         seen = set()
         unique = []
-        for label, eff in cleaned:
-            if eff in seen:
+        for label, eff, args in cleaned:
+            if (eff, (args or '').lower()) in seen:
                 continue
-            seen.add(eff)
-            unique.append((label, eff))
+            seen.add((eff, (args or '').lower()))
+            unique.append((label, eff, args or ""))
         unique.sort(key=lambda t: t[0].lower())
         self._all_items = unique
 
@@ -801,7 +845,7 @@ class AppPickerDialog(QDialog):
         text = self.filter_edit.text().strip().lower()
         show_all = self.show_all_cb.isChecked()
         items = self._all_items if not show_all else [
-            (l, (t or f) if (t or f) else f) for (l, f, t, is_link) in self._raw_entries
+            (l, (t or f) if (t or f) else f, (a or "")) for (l, f, t, a, is_link) in self._raw_entries
             if (t or f) and (t or f).lower().endswith('.exe')
         ]
         if text:
@@ -811,12 +855,12 @@ class AppPickerDialog(QDialog):
 
     def _rebuild_list(self, items):
         self.list.clear()
-        for label, full in items:
+        for label, full, args in items:
             it = QListWidgetItem(label)
-            it.setData(Qt.UserRole, full)
+            it.setData(Qt.UserRole, (full, args))
             self.list.addItem(it)
 
-    def get_selected(self) -> str | None:
+    def get_selected(self) -> tuple[str, str] | None:
         it = self.list.currentItem()
         if not it:
             return None
@@ -1609,6 +1653,20 @@ class MainWindow(QMainWindow):
             if isinstance(col, str) and len(col) == 7 and col.startswith('#'):
                 try:
                     r = int(col[1:3],16); g = int(col[3:5],16); b = int(col[5:7],16)
+                    # Apply optional intensity scaling
+                    inten = str(mapping.get("intensity", "medium")).lower()
+                    factor_map = {"low": 0.4, "medium": 0.7, "high": 1.0}
+                    if inten not in factor_map:
+                        # support numeric legacy 1..3
+                        try:
+                            n = int(mapping.get("intensity"))
+                            inten = {1:"low", 2:"medium", 3:"high"}.get(n, "medium")
+                        except Exception:
+                            inten = "medium"
+                    f = factor_map.get(inten, 0.7)
+                    r = max(0, min(255, int(r * f)))
+                    g = max(0, min(255, int(g * f)))
+                    b = max(0, min(255, int(b * f)))
                     return (r, g, b)
                 except Exception:
                     pass
@@ -2280,9 +2338,10 @@ class MainWindow(QMainWindow):
                 self.start_animation_requested.emit(anim_name, iterations, False)
         elif mapping and mapping.get("type") == "launch app":
             path = mapping.get("path")
+            args = mapping.get("args", "")
             if path:
                 try:
-                    self._launch_app_silent(path)
+                    self._launch_app_silent(path, args=args)
                 except Exception as e:
                     QMessageBox.warning(self, "Launch App", f"Failed to launch: {e}")
         elif mapping and mapping.get("type") == "run process":
@@ -2339,11 +2398,11 @@ class MainWindow(QMainWindow):
                         new_map["command"] = val
                     elif type_ == "launch app":
                         new_map["path"] = dlg.launch_path.text().strip()
+                        new_map["args"] = dlg.launch_args.text().strip()
                     elif type_ == "hotkey":
                         new_map["keys"] = dlg.hotkey_edit.text().strip()
                     elif type_ == "media control":
                         new_map["action"] = dlg.media_select.currentText()
-                        new_map["steps"] = int(getattr(dlg, 'media_steps').value())
                     elif type_ == "switch layer":
                         new_map["layer"] = layer
                     elif type_ == "layer nav":
@@ -2357,6 +2416,11 @@ class MainWindow(QMainWindow):
                 if color:
                     new_map["color"] = color
                     self.last_color = color
+                    # Store intensity when a color is set
+                    inten = (dlg.intensity_select.currentText() or "medium").lower()
+                    if inten not in ("low","medium","high"):
+                        inten = "medium"
+                    new_map["intensity"] = inten
                 # Do not persist a color-only mapping without a color value
                 if new_map.get("type") == "color" and not color:
                     self.layers[self.active_layer]["pads"].pop(pad_key, None)
@@ -2366,11 +2430,8 @@ class MainWindow(QMainWindow):
             self.sync_pad_lights()
             if self._ready:
                 self.mark_dirty()
-    def _launch_app_silent(self, path: str):
-        """Startar ett program utan terminalspam / nytt konsolfönster.
-
-        På Windows används STARTF_USESHOWWINDOW + CREATE_NO_WINDOW för att tysta.
-        Stdout/stderr dirigeras till devnull. """
+    def _launch_app_silent(self, path: str, args: str = ""):
+        """Launch an app with optional arguments without opening a console window."""
         try:
             devnull = subprocess.DEVNULL
         except Exception:
@@ -2382,10 +2443,22 @@ class MainWindow(QMainWindow):
             si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             kwargs['startupinfo'] = si
             kwargs['creationflags'] = CREATE_NO_WINDOW
+        # Build command
+        cmd = [path]
+        if args:
+            # naive split; Windows-friendly: keep as one string lets Popen pass to CreateProcess properly
+            kwargs['shell'] = False
+            try:
+                import shlex
+                parts = shlex.split(args, posix=False)
+                cmd.extend(parts)
+            except Exception:
+                # fallback: pass as single parameter
+                cmd.append(args)
         try:
-            subprocess.Popen(path, **kwargs)
+            subprocess.Popen(cmd, **kwargs)
         except Exception as e:
-            # Faller tillbaka till vanlig launch om första försöket misslyckas
+            # Fallback to plain open
             try:
                 subprocess.Popen(path)
             except Exception:

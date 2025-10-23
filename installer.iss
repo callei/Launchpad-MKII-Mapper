@@ -19,6 +19,9 @@ OutputBaseFilename=LaunchpadMapperSetup
 Compression=lzma
 SolidCompression=yes
 WizardStyle=classic
+; Require admin install so the app has sufficient rights and installs under Program Files
+PrivilegesRequired=admin
+PrivilegesRequiredOverridesAllowed=dialog
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
