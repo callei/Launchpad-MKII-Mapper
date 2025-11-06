@@ -173,12 +173,12 @@ class FramelessPopup(QDialog):
 
     # Drag support
     def _title_mouse_press(self, event):
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton:
             self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
             event.accept()
 
     def _title_mouse_move(self, event):
-        if self._drag_pos is not None and event.buttons() & Qt.LeftButton:
+        if self._drag_pos is not None and event.buttons() & Qt.MouseButton.LeftButton:
             self.move(event.globalPosition().toPoint() - self._drag_pos)
             event.accept()
 
@@ -188,11 +188,16 @@ class FramelessPopup(QDialog):
 
 
 class ColorPickerPopup(FramelessPopup):
-    """Custom color picker wrapped in our frameless popup to maintain consistent styling."""
-    def __init__(self, initial_color: str | None, original_color: str | None, parent=None):
+    """Custom color picker wrapped in our frameless popup to maintain consistent styling.
+
+    Now also includes an intensity selector (low/medium/high) so intensity travels with color
+    selections across both mapping and animation editors.
+    """
+    def __init__(self, initial_color: str | None, original_color: str | None, parent=None, initial_intensity: str | None = None):
         super().__init__(title="Pick Color", parent=parent)
         self._selected: str | None = initial_color
         self._original = original_color
+        self._intensity = (initial_intensity or "medium").lower()
         lay = self.content_layout()
         # Embed a standard QColorDialog (non-native) without its own window frame
         self._dlg = QColorDialog(QColor(initial_color or '#ffffff'), self)
@@ -205,6 +210,18 @@ class ColorPickerPopup(FramelessPopup):
         h_layout.setContentsMargins(0, 0, 0, 0)
         h_layout.addWidget(self._dlg)
         lay.addWidget(host)
+        # Intensity selector + buttons row
+        inten_row = QHBoxLayout()
+        inten_row.addWidget(QLabel("Intensity:"))
+        self.intensity_select = QComboBox()
+        self.intensity_select.addItems(["low", "medium", "high"])
+        try:
+            idx = ["low","medium","high"].index(self._intensity)
+        except ValueError:
+            idx = 1
+        self.intensity_select.setCurrentIndex(idx)
+        inten_row.addWidget(self.intensity_select)
+        lay.addLayout(inten_row)
         # Extra buttons row
         btn_row = QHBoxLayout()
         self.clear_btn = QPushButton("Clear")
@@ -285,10 +302,54 @@ class ColorPickerPopup(FramelessPopup):
         col = self._dlg.currentColor()
         if col.isValid():
             self._selected = col.name()
+        self._intensity = (self.intensity_select.currentText() or "medium").lower()
         self.accept()
 
     def get_selected_color(self) -> str | None:
         return self._selected
+    def get_selected_intensity(self) -> str:
+        return (self._intensity or "medium").lower()
+
+
+class SettingsPopup(FramelessPopup):
+    """Settings dialog for startup behavior and tray options."""
+    def __init__(self, ui_cfg: dict, is_frozen: bool, parent=None):
+        super().__init__(title="Settings", parent=parent)
+        self.set_popup_title("Settings")
+        self._ui_cfg = dict(ui_cfg) if isinstance(ui_cfg, dict) else {}
+        lay = self.content_layout()
+
+        lay.addWidget(QLabel("When starting the app:"))
+        self.start_mode = QComboBox()
+        self.start_mode.addItems(["normal", "minimized", "hidden"])  # hidden = tray only
+        current_mode = (self._ui_cfg.get("start_mode") or ("hidden" if self._ui_cfg.get("start_hidden") else "normal")).lower()
+        if current_mode not in ("normal","minimized","hidden"):
+            current_mode = "normal"
+        self.start_mode.setCurrentText(current_mode)
+        lay.addWidget(self.start_mode)
+
+        self.minimize_to_tray_cb = QCheckBox("Close button hides to system tray (keep running)")
+        self.minimize_to_tray_cb.setChecked(bool(self._ui_cfg.get("minimize_to_tray", False)))
+        lay.addWidget(self.minimize_to_tray_cb)
+
+        self.autostart_cb = QCheckBox("Start with Windows")
+        self.autostart_cb.setChecked(bool(self._ui_cfg.get("autostart_enabled", False)))
+        lay.addWidget(self.autostart_cb)
+        if not is_frozen:
+            self.autostart_cb.setEnabled(True)
+            self.autostart_cb.setToolTip("Requires installed app to reliably start with Windows.")
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        lay.addWidget(btns)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+
+    def get_result(self):
+        return {
+            "start_mode": self.start_mode.currentText(),
+            "minimize_to_tray": self.minimize_to_tray_cb.isChecked(),
+            "autostart_enabled": self.autostart_cb.isChecked(),
+        }
 
 
 class TextInputPopup(FramelessPopup):
@@ -417,7 +478,7 @@ class PadEditorDialog(FramelessPopup):
         self.color_btn = QPushButton("Pick Color")
         self.color_btn.clicked.connect(self.pick_color)
         layout.addWidget(self.color_btn)
-        # Color intensity
+        # Color intensity (handled in color picker; keep hidden storage to persist value)
         self.intensity_label = QLabel("Color intensity:")
         self.intensity_select = QComboBox()
         self.intensity_select.addItems(["low", "medium", "high"])  # default medium
@@ -425,6 +486,9 @@ class PadEditorDialog(FramelessPopup):
         inten_row.addWidget(self.intensity_label)
         inten_row.addWidget(self.intensity_select)
         inten_w = QWidget(); inten_w.setLayout(inten_row)
+        inten_w.setVisible(False)
+        self.intensity_label.setVisible(False)
+        self.intensity_select.setVisible(False)
         layout.addWidget(inten_w)
         self.selected_color = None
         # Buttons
@@ -486,12 +550,17 @@ class PadEditorDialog(FramelessPopup):
             # Intensity default medium
             inten = str(mapping.get("intensity", "medium")).lower()
             if inten not in ("low","medium","high"):
-                try:
-                    # numeric legacy 1..3
-                    n = int(mapping.get("intensity"))
-                    inten = {1:"low",2:"medium",3:"high"}.get(n, "medium")
-                except Exception:
-                    inten = "medium"
+                # numeric legacy 1..3 guarded parsing
+                raw_int = mapping.get("intensity")
+                n: int | None = None
+                if isinstance(raw_int, int):
+                    n = raw_int
+                elif isinstance(raw_int, str) and raw_int.isdigit():
+                    try:
+                        n = int(raw_int)
+                    except Exception:
+                        n = None
+                inten = {1:"low",2:"medium",3:"high"}.get(n, "medium") if n in (1,2,3) else "medium"
             self.intensity_select.setCurrentText(inten)
             if mtype in ("layer nav", "layer_nav"):
                 self.nav_label.setVisible(True)
@@ -568,9 +637,20 @@ class PadEditorDialog(FramelessPopup):
             pass
 
     def pick_color(self):
-        picker = ColorPickerPopup(initial_color=self.selected_color, original_color=self.selected_color, parent=self)
+        # Pass current (hidden) intensity into the picker and sync back on accept
+        try:
+            init_inten = (self.intensity_select.currentText() or "medium").lower()
+        except Exception:
+            init_inten = "medium"
+        picker = ColorPickerPopup(initial_color=self.selected_color, original_color=self.selected_color, parent=self, initial_intensity=init_inten)
         if picker.exec() == QDialog.Accepted:
             self.selected_color = picker.get_selected_color()
+            try:
+                inten = picker.get_selected_intensity()
+                if inten in ("low","medium","high"):
+                    self.intensity_select.setCurrentText(inten)
+            except Exception:
+                pass
 
     # Legacy color menu removed (function kept no-op if called)
     def _open_color_menu(self):
@@ -611,7 +691,7 @@ class _AppScanWorker(QThread):
                     return
                 eff = target or full
                 # Basic sanity on path
-                if not eff or not eff.lower().endswith('.exe'):
+                if not eff or not (eff.lower().endswith('.exe') or eff.lower().endswith('.lnk')):
                     return
                 key = (label.lower(), eff.lower(), (args or '').lower())
                 if key in seen_effective:
@@ -637,7 +717,6 @@ class _AppScanWorker(QThread):
                 shell = win32com.client.Dispatch('WScript.Shell')
             except Exception:
                 shell = None
-            skip_sub = ("uninstall", "update", "help", "readme", "license", "manual", "guide", "support", "about", "documentation")
             for root in dirs:
                 for path in root.rglob('*'):
                     if self._stop:
@@ -646,9 +725,6 @@ class _AppScanWorker(QThread):
                         continue
                     suf = path.suffix.lower()
                     if suf not in exts:
-                        continue
-                    name_lower = path.stem.lower()
-                    if any(s in name_lower for s in skip_sub):
                         continue
                     full = str(path)
                     target = None
@@ -761,6 +837,12 @@ class _AppScanWorker(QThread):
                     except Exception:
                         continue
 
+            # If nothing found despite sources, add common system apps as minimal baseline
+            if not entries:
+                for sys_app in ["notepad.exe", "calc.exe", "mspaint.exe"]:
+                    path = os.path.join(os.environ.get('SystemRoot', 'C:/Windows'), sys_app)
+                    if os.path.exists(path):
+                        entries.append((sys_app[:-4].title(), path, path, "", False))
             entries.sort(key=lambda t: t[0].lower())
             self.resultReady.emit(entries)
         except Exception:
@@ -778,7 +860,7 @@ class AppPickerDialog(QDialog):
         top_row = QHBoxLayout()
         self.filter_edit = QLineEdit()
         self.filter_edit.setPlaceholderText("Filter… (skriv för att filtrera)")
-        self.show_all_cb = QCheckBox("Visa allt")
+        self.show_all_cb = QCheckBox("Visa mer")
         top_row.addWidget(self.filter_edit)
         top_row.addWidget(self.show_all_cb)
         v.addLayout(top_row)
@@ -815,8 +897,8 @@ class AppPickerDialog(QDialog):
             eff = (target or full)
             if not eff:
                 continue
-            if not eff.lower().endswith('.exe'):
-                # Skip non-exe targets
+            if not (eff.lower().endswith('.exe') or eff.lower().endswith('.lnk')):
+                # Skip non-executable targets
                 continue
             low = eff.lower()
             # Filter heuristics (unless show_all later)
@@ -960,14 +1042,20 @@ class MainWindow(QMainWindow):
         self.init_ui()
         self.apply_theme()
         self._install_tray()
-        # Always start with preset 'empty' if it exists (override layer contents at launch)
-        from pathlib import Path as _P
-        empty_path = PRESETS_DIR / "empty.yaml"
-        if empty_path.exists():
-            try:
-                self.load_preset("empty")
-            except Exception:
-                pass
+        # Load last used preset if recorded; else fallback to 'empty' if present
+        try:
+            last_preset = None
+            ui_section = self.config.get('ui') if isinstance(self.config, dict) else {}
+            if isinstance(ui_section, dict):
+                last_preset = ui_section.get('last_preset')
+            if last_preset and (PRESETS_DIR / f"{last_preset}.yaml").exists():
+                self.load_preset(last_preset)
+            else:
+                empty_path = PRESETS_DIR / "empty.yaml"
+                if empty_path.exists():
+                    self.load_preset("empty")
+        except Exception:
+            pass
         # Mark ready so subsequent edits trigger autosave
         self._ready = True
         # Try automatic Launchpad connect after UI shown
@@ -994,6 +1082,13 @@ class MainWindow(QMainWindow):
             "QPushButton:hover { background:#3f3f3f; color:#fff; }"
             "QPushButton:pressed { background:#222; }"
         )
+        # Settings (gear) button
+        settings_btn = QPushButton("⚙")
+        settings_btn.setFixedWidth(32)
+        settings_btn.setStyleSheet(btn_style)
+        settings_btn.setToolTip("Open Settings")
+        settings_btn.clicked.connect(self._open_settings)
+        layout.addWidget(settings_btn)
         min_btn = QPushButton("–")
         min_btn.setFixedWidth(28)
         min_btn.setStyleSheet(btn_style)
@@ -1012,12 +1107,12 @@ class MainWindow(QMainWindow):
         return bar
 
     def _title_mouse_press(self, event):
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton:
             self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
             event.accept()
 
     def _title_mouse_move(self, event):
-        if self._drag_pos is not None and event.buttons() & Qt.LeftButton:
+        if self._drag_pos is not None and event.buttons() & Qt.MouseButton.LeftButton:
             self.move(event.globalPosition().toPoint() - self._drag_pos)
             event.accept()
 
@@ -1490,7 +1585,11 @@ class MainWindow(QMainWindow):
                 x, y = map(int, key.split(","))
                 btn = self.anim_pad_buttons.get((x, y))
                 if btn:
-                    btn.update_color(col)
+                    # col may be a hex string or a dict {color: "#rrggbb", intensity: "low|medium|high"}
+                    if isinstance(col, dict):
+                        btn.update_color(col.get("color"))
+                    else:
+                        btn.update_color(col)
             except Exception:
                 pass
 
@@ -1504,11 +1603,18 @@ class MainWindow(QMainWindow):
         if idx >= len(frames):
             return
         frame = frames[idx]
-        color = QColorDialog.getColor()
-        if color.isValid():
-            frame.setdefault("pads", {})[f"{pad[0]},{pad[1]}"] = color.name()
+        # Use the enhanced color picker with intensity
+        picker = ColorPickerPopup(initial_color=None, original_color=None, parent=self, initial_intensity="medium")
+        if picker.exec() == QDialog.Accepted:
+            sel = picker.get_selected_color()
+            if sel:
+                inten = picker.get_selected_intensity()
+                frame.setdefault("pads", {})[f"{pad[0]},{pad[1]}"] = {"color": sel, "intensity": inten}
+            else:
+                frame.setdefault("pads", {}).pop(f"{pad[0]},{pad[1]}", None)
         else:
-            frame.setdefault("pads", {}).pop(f"{pad[0]},{pad[1]}", None)
+            # Cancel: no change
+            pass
         self._refresh_animation_grid()
         self._refresh_frames_list()
         self.frame_list.setCurrentRow(idx)
@@ -1598,7 +1704,18 @@ class MainWindow(QMainWindow):
             for key, col in fr.get('pads', {}).items():
                 try:
                     x, y = map(int, key.split(','))
-                    r = int(col[1:3],16); g=int(col[3:5],16); b=int(col[5:7],16)
+                    if isinstance(col, dict):
+                        hex_col = col.get('color')
+                        inten = str(col.get('intensity', 'medium')).lower()
+                    else:
+                        hex_col = col
+                        inten = 'medium'
+                    if not (isinstance(hex_col, str) and len(hex_col) == 7 and hex_col.startswith('#')):
+                        continue
+                    r = int(hex_col[1:3],16); g=int(hex_col[3:5],16); b=int(hex_col[5:7],16)
+                    factor_map = {'low':0.4,'medium':0.7,'high':1.0}
+                    f = factor_map.get(inten, 0.7)
+                    r = max(0,min(255,int(r*f))); g=max(0,min(255,int(g*f))); b=max(0,min(255,int(b*f)))
                     composite[(x,y)] = (r,g,b)
                 except Exception:
                     pass
@@ -1657,12 +1774,18 @@ class MainWindow(QMainWindow):
                     inten = str(mapping.get("intensity", "medium")).lower()
                     factor_map = {"low": 0.4, "medium": 0.7, "high": 1.0}
                     if inten not in factor_map:
-                        # support numeric legacy 1..3
-                        try:
-                            n = int(mapping.get("intensity"))
-                            inten = {1:"low", 2:"medium", 3:"high"}.get(n, "medium")
-                        except Exception:
-                            inten = "medium"
+                        # support numeric legacy 1..3 (no stray try-block)
+                        raw_int = mapping.get("intensity")
+                        n: int | None = None
+                        if isinstance(raw_int, int):
+                            n = raw_int
+                        elif isinstance(raw_int, str) and raw_int.isdigit():
+                            try:
+                                n = int(raw_int)
+                            except Exception:
+                                n = None
+                        if n in (1,2,3):
+                            inten = {1:"low", 2:"medium", 3:"high"}[n]
                     f = factor_map.get(inten, 0.7)
                     r = max(0, min(255, int(r * f)))
                     g = max(0, min(255, int(g * f)))
@@ -1958,16 +2081,38 @@ class MainWindow(QMainWindow):
         self._save_debounce_timer.start(800)
 
     def closeEvent(self, event):
-        # Persist UI visibility (hidden vs shown) so next start matches user's last state
+        # Minimize-to-tray behavior if enabled
         try:
             ui = self.config.get('ui', {}) if isinstance(self.config, dict) else {}
-            ui['start_hidden'] = bool(self.isHidden())
-            if isinstance(self.config, dict):
-                self.config['ui'] = ui
+            minimize_to_tray = bool(ui.get('minimize_to_tray', False))
         except Exception:
-            pass
-        # Silent autosave of current config (includes animations) before closing
+            minimize_to_tray = False
+        if minimize_to_tray and not getattr(self, '_force_quit', False):
+            event.ignore()
+            self.hide()
+            # One-time notice
+            if not getattr(self, '_tray_tip_shown', False) and hasattr(self, 'tray'):
+                try:
+                    self.tray.showMessage("Launchpad Mapper", "Still running in tray. Use Quit to exit.")
+                    self._tray_tip_shown = True
+                except Exception:
+                    pass
+            # Persist hidden state quickly
+            try:
+                ui = self.config.get('ui', {}) if isinstance(self.config, dict) else {}
+                if isinstance(ui, dict):
+                    ui['start_hidden'] = True
+                    self.config['ui'] = ui
+                self.save_config(silent=True)
+            except Exception:
+                pass
+            return
+        # Normal close path
         try:
+            ui = self.config.get('ui', {}) if isinstance(self.config, dict) else {}
+            if isinstance(ui, dict):
+                ui['start_hidden'] = False
+                self.config['ui'] = ui
             self.save_config(silent=True)
         except Exception:
             pass
@@ -1999,6 +2144,9 @@ class MainWindow(QMainWindow):
         show_act = QAction("Open Window", self)
         show_act.triggered.connect(self._tray_show)
         menu.addAction(show_act)
+        settings_act = QAction("Settings", self)
+        settings_act.triggered.connect(self._open_settings)
+        menu.addAction(settings_act)
         reload_lp = QAction("Reconnect Launchpad", self)
         reload_lp.triggered.connect(lambda: self.init_midi(auto=False))
         menu.addAction(reload_lp)
@@ -2008,13 +2156,25 @@ class MainWindow(QMainWindow):
         self.tray.setContextMenu(menu)
         self.tray.activated.connect(self._on_tray_activated)
         self.tray.show()
+        self._tray_tip_shown = False
+        self._force_quit = False
 
     def _tray_show(self):
         self.showNormal()
         self.raise_()
         self.activateWindow()
+        # Ensure next start isn't forced hidden just because we opened it
+        try:
+            ui = self.config.get('ui', {}) if isinstance(self.config, dict) else {}
+            if isinstance(ui, dict):
+                ui['start_hidden'] = False
+                self.config['ui'] = ui
+                self.save_config(silent=True)
+        except Exception:
+            pass
 
     def _tray_quit(self):
+        self._force_quit = True
         self.close()
 
     def _on_tray_activated(self, reason):
@@ -2023,6 +2183,72 @@ class MainWindow(QMainWindow):
                 self._tray_show()
             else:
                 self.hide()
+
+    # --- Settings dialog integration ---
+    def _open_settings(self):
+        try:
+            ui_cfg = self.config.get('ui', {}) if isinstance(self.config, dict) else {}
+        except Exception:
+            ui_cfg = {}
+        dlg = SettingsPopup(ui_cfg, getattr(sys, 'frozen', False), parent=self)
+        if dlg.exec() == QDialog.Accepted:
+            res = dlg.get_result()
+            try:
+                ui = self.config.get('ui', {}) if isinstance(self.config, dict) else {}
+                if not isinstance(ui, dict):
+                    ui = {}
+                mode = (res.get('start_mode') or 'normal').lower()
+                if mode not in ('normal','minimized','hidden'):
+                    mode = 'normal'
+                ui['start_mode'] = mode
+                ui['minimize_to_tray'] = bool(res.get('minimize_to_tray'))
+                ui['autostart_enabled'] = bool(res.get('autostart_enabled'))
+                # Backward compatibility field
+                ui['start_hidden'] = (mode == 'hidden')
+                self.config['ui'] = ui
+                # Update Windows autostart
+                if sys.platform == 'win32':
+                    ok = self._update_autostart_registry(ui['autostart_enabled'])
+                    if not ok and ui['autostart_enabled']:
+                        QMessageBox.warning(self, 'Autostart', 'Failed to update Windows autostart registry.')
+                self.save_config(silent=True)
+                # Apply mode immediately
+                if mode == 'normal':
+                    self.showNormal(); self.raise_(); self.activateWindow()
+                elif mode == 'minimized':
+                    self.show(); self.showMinimized()
+                elif mode == 'hidden':
+                    self.hide()
+                self.statusBar().showMessage('Settings saved.', 4000)
+            except Exception as e:
+                QMessageBox.warning(self, 'Settings', f'Failed to save settings: {e}')
+
+    def _update_autostart_registry(self, enable: bool) -> bool:
+        if sys.platform != 'win32':
+            return False
+        try:
+            import winreg
+            key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_ALL_ACCESS) as key:
+                value_name = 'LaunchpadMapper'
+                if enable:
+                    if getattr(sys, 'frozen', False):
+                        exe_path = Path(sys.executable).resolve()
+                        cmd = f'"{exe_path}"'
+                    else:
+                        # Start via python executable to ensure correct interpreter in dev mode
+                        py = Path(sys.executable).resolve()
+                        script = Path(__file__).resolve()
+                        cmd = f'"{py}" "{script}"'
+                    winreg.SetValueEx(key, value_name, 0, winreg.REG_SZ, cmd)
+                else:
+                    try:
+                        winreg.DeleteValue(key, value_name)
+                    except FileNotFoundError:
+                        pass
+            return True
+        except Exception:
+            return False
 
     # --- Presets management ---
     def ensure_presets_dir(self):
@@ -2263,6 +2489,16 @@ class MainWindow(QMainWindow):
         self.layers[self.active_layer]["pads"].setdefault("2,-1", nav_prev)
         self.layers[self.active_layer]["pads"].setdefault("3,-1", nav_next)
         self.current_preset_name = name
+        # Persist last_preset in config ui section for auto-load on next start
+        try:
+            ui = self.config.get('ui', {}) if isinstance(self.config, dict) else {}
+            if not isinstance(ui, dict):
+                ui = {}
+            ui['last_preset'] = name
+            self.config['ui'] = ui
+            self.save_config(silent=True)
+        except Exception:
+            pass
         # Hard clear hardware to avoid lingering lights from previous preset
         if self.lp:
             try:
@@ -2480,10 +2716,22 @@ class MainWindow(QMainWindow):
         self.config["active_layer"] = self.active_layer
         self.config["layers"] = self.layers
         self.config["animations"] = self.animations
-        # Ensure UI section exists and update visibility snapshot
+        # Ensure UI section exists; keep custom fields
         try:
             ui = self.config.get('ui', {}) if isinstance(self.config, dict) else {}
-            ui['start_hidden'] = bool(self.isHidden())
+            if not isinstance(ui, dict):
+                ui = {}
+            # Maintain start_mode preference; derive start_hidden for backward compatibility
+            ui.setdefault('start_mode', 'normal')
+            if ui.get('start_mode') == 'hidden' or self.isHidden():
+                ui['start_hidden'] = True
+            else:
+                ui['start_hidden'] = False
+            # Preserve existing flags if present
+            ui.setdefault('minimize_to_tray', ui.get('minimize_to_tray', False))
+            ui.setdefault('autostart_enabled', ui.get('autostart_enabled', False))
+            # last_preset may already be set elsewhere
+            ui.setdefault('last_preset', ui.get('last_preset'))
             self.config['ui'] = ui
         except Exception:
             pass
@@ -2544,16 +2792,21 @@ class CaretSpinStyle(QProxyStyle):
             return
         super().drawPrimitive(element, option, painter, widget)
 
-    # (Tidigare monkey patch helpers borttagna – allt ligger nu inne i MainWindow.)
 
 def main():
-    # Determine desired start_hidden: CLI flag overrides saved preference
-    cli_hidden = ('--background' in sys.argv) or ('--hidden' in sys.argv)
-    if '--background' in sys.argv:
-        sys.argv.remove('--background')
-    if '--hidden' in sys.argv:
-        sys.argv.remove('--hidden')
-    saved_hidden = False
+    # Determine startup mode (normal|minimized|hidden) with backward compatible flags
+    cli_hidden = False
+    if '--background' in sys.argv or '--hidden' in sys.argv:
+        cli_hidden = True
+        try:
+            sys.argv.remove('--background')
+        except ValueError:
+            pass
+        try:
+            sys.argv.remove('--hidden')
+        except ValueError:
+            pass
+    saved_mode = 'normal'
     try:
         if CONFIG_PATH.exists():
             with open(CONFIG_PATH, 'r', encoding='utf-8') as _cf:
@@ -2561,10 +2814,13 @@ def main():
             if isinstance(_cfg, dict):
                 ui = _cfg.get('ui') or {}
                 if isinstance(ui, dict):
-                    saved_hidden = bool(ui.get('start_hidden', False))
+                    saved_mode = ui.get('start_mode') or ('hidden' if ui.get('start_hidden') else 'normal')
     except Exception:
         pass
-    start_hidden = cli_hidden or saved_hidden
+    if cli_hidden:
+        effective_mode = 'hidden'
+    else:
+        effective_mode = saved_mode if saved_mode in ('normal','minimized','hidden') else 'normal'
     # Optional: --preset <name> to force-load a layer preset file (presets/<name>.yaml) after config
     preset_to_load = None
     if '--preset' in sys.argv:
@@ -2583,7 +2839,7 @@ def main():
         _debug_log('Creating QApplication...')
         app = QApplication(sys.argv)
         _debug_log('QApplication created. Constructing MainWindow...')
-        win = MainWindow(start_hidden=start_hidden)
+        win = MainWindow(start_hidden=(effective_mode == 'hidden'))
         _debug_log('MainWindow constructed.')
     except Exception as e:
         _debug_log('Exception during MainWindow init:')
@@ -2598,9 +2854,11 @@ def main():
                 win.load_preset(preset_to_load)
         except Exception:
             pass
-    if not start_hidden:
+    if effective_mode != 'hidden':
         _debug_log('Calling win.show()...')
         win.show()
+        if effective_mode == 'minimized':
+            win.showMinimized()
         _debug_log('win.show() returned. Entering event loop...')
     try:
         rc = app.exec()

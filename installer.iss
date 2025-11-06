@@ -37,14 +37,14 @@ Source: "dist/LaunchpadMapper/*"; DestDir: "{app}"; Flags: recursesubdirs create
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
-Name: "{userstartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--background"; Tasks: autostart
+Name: "{userstartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: autostart
 
 [Run]
 ; Starta appen direkt efter installation (valfritt av användaren)
 Filename: "{app}\\{#MyAppExeName}"; Description: "Start {#MyAppName} nu"; Flags: nowait postinstall skipifsilent
 ; Sätt Run key om autostart valts
 [Registry]
-Root: HKCU; Subkey: "Software\\Microsoft\\Windows\\CurrentVersion\\Run"; ValueType: string; ValueName: "LaunchpadMapper"; ValueData: """{app}\\{#MyAppExeName}"" --background"; Tasks: autostart
+Root: HKCU; Subkey: "Software\\Microsoft\\Windows\\CurrentVersion\\Run"; ValueType: string; ValueName: "LaunchpadMapper"; ValueData: """{app}\\{#MyAppExeName}"""; Tasks: autostart
 
 [UninstallDelete]
 ; Ta bort användarkonfiguration och presets under AppData vid avinstallering

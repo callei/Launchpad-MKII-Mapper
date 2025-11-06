@@ -24,8 +24,8 @@ $pythonExe = Join-Path $PSScriptRoot '.venv/Scripts/python.exe'
 if (-not (Test-Path $pythonExe)) { $pythonExe = 'python' }
 
 # Ensure dependencies installed (i vald tolk)
-Write-Host 'Ensuring dependencies installed (PySide6, mido, python-rtmidi, pyyaml)...'
-& $pythonExe -m pip install --disable-pip-version-check PySide6 mido python-rtmidi pyyaml | Out-Null
+Write-Host 'Ensuring dependencies installed (PySide6, mido, python-rtmidi, pyyaml, pywin32)...'
+& $pythonExe -m pip install --disable-pip-version-check PySide6 mido python-rtmidi pyyaml pywin32 | Out-Null
 
 $iconPath = Join-Path $PSScriptRoot 'icons/app.ico'
 
@@ -87,6 +87,8 @@ if (Test-Path 'icons') { $pyArgs += @('--add-data','icons;icons') }
 if (Test-Path 'config.yaml') { $pyArgs += @('--add-data','config.yaml;.') }
 # Hidden imports for dynamic modules
 $pyArgs += @('--hidden-import','rtmidi','--hidden-import','rtmidi._rtmidi','--hidden-import','mido.backends.rtmidi','--hidden-import','importlib_metadata')
+# Ensure win32com is included when pywin32 is present
+$pyArgs += @('--hidden-import','win32com','--hidden-import','win32com.client')
 
 # Locate _rtmidi*.pyd and include explicitly (PyInstaller missar ibland den via importscanning)
 $rtmidiDir = Join-Path $PSScriptRoot '.venv/Lib/site-packages/rtmidi'

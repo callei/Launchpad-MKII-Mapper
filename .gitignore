@@ -30,3 +30,7 @@ Thumbs.db
 *.pyz
 *.manifest
 *.spec.backup
+
+# git.txt
+git.txt
+file_versions_info.txt

@@ -39,18 +39,41 @@ class LaunchpadController:
 
     # --- Device Discovery ---
     def open(self) -> None:
-        """Open MIDI ports; if not found and virtual allowed, run in virtual logging mode."""
-        in_name = next((n for n in mido.get_input_names() if self.input_name_substr in n), None)
-        out_name = next((n for n in mido.get_output_names() if self.output_name_substr in n), None)
+        """Open MIDI ports; if unavailable or opening fails, fall back to virtual mode (if allowed)."""
+        inputs = mido.get_input_names()
+        outputs = mido.get_output_names()
+        in_name = next((n for n in inputs if self.input_name_substr in n), None)
+        out_name = next((n for n in outputs if self.output_name_substr in n), None)
         if not in_name or not out_name:
             if self.allow_virtual:
                 self.virtual = True
                 print("[controller] Hardware not found; entering virtual mode. Incoming pad presses won't arrive.")
                 return
-            raise RuntimeError("Launchpad MIDI ports not found. Available: " + str(mido.get_input_names()))
+            raise RuntimeError(f"Launchpad MIDI ports not found. Inputs={inputs} Outputs={outputs}")
         self.virtual = False
-        self.inport = mido.open_input(in_name, callback=self._handle_message)
-        self.outport = mido.open_output(out_name)
+        try:
+            # Open output first (some drivers behave better in this order)
+            self.outport = mido.open_output(out_name)
+            self.inport = mido.open_input(in_name, callback=self._handle_message)
+        except Exception as e:
+            # Clean up and optionally fall back to virtual mode
+            try:
+                if self.inport:
+                    self.inport.close()
+            except Exception:
+                pass
+            try:
+                if self.outport:
+                    self.outport.close()
+            except Exception:
+                pass
+            self.inport = None
+            self.outport = None
+            if self.allow_virtual:
+                self.virtual = True
+                print(f"[controller] MIDI open failed: {e}. Entering virtual mode. Incoming pad presses won't arrive.")
+                return
+            raise
     # We avoid forcing programmer mode now to prevent unintended pad colors.
 
     def close(self) -> None:
