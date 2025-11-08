@@ -12,12 +12,14 @@ from PySide6.QtCore import Qt, Signal, QPoint, QTimer, QThread
 from PySide6.QtGui import QPalette, QColor, QFont, QFontDatabase, QPainterPath, QRegion, QPainter, QPen
 from PySide6.QtWidgets import QProxyStyle, QStyle, QStyleFactory
 from PySide6.QtWidgets import QGraphicsDropShadowEffect
+from PySide6.QtNetwork import QLocalServer, QLocalSocket
 import yaml
 import re
 import traceback
 import shutil
 import atexit
 import signal
+import getpass
 
 """Main GUI module for Launchpad Mapper.
 
@@ -2861,9 +2863,71 @@ def main():
     try:
         _debug_log('Creating QApplication...')
         app = QApplication(sys.argv)
-        _debug_log('QApplication created. Constructing MainWindow...')
+        _debug_log('QApplication created. Checking single-instance...')
+        # --- Single-instance guard using QLocalServer ---
+        server_name = f"LaunchpadMapper_{getpass.getuser()}"
+        # If another instance is listening, signal it to show and exit
+        try:
+            probe = QLocalSocket()
+            probe.connectToServer(server_name)
+            if probe.waitForConnected(200):
+                try:
+                    probe.write(b'SHOW')
+                    probe.flush()
+                    probe.waitForBytesWritten(200)
+                except Exception:
+                    pass
+                try:
+                    probe.disconnectFromServer()
+                except Exception:
+                    pass
+                _debug_log('Another instance detected; signaled SHOW and exiting.')
+                sys.exit(0)
+        except Exception:
+            pass
+        _debug_log('Constructing MainWindow...')
         win = MainWindow(start_hidden=(effective_mode == 'hidden'))
         _debug_log('MainWindow constructed.')
+        # Start local server to receive SHOW requests from subsequent launches
+        try:
+            QLocalServer.removeServer(server_name)
+        except Exception:
+            pass
+        try:
+            server = QLocalServer(app)
+            def _on_new_conn():
+                try:
+                    sock = server.nextPendingConnection()
+                except Exception:
+                    sock = None
+                # Regardless of message, bring to foreground
+                try:
+                    win._tray_show()
+                except Exception:
+                    try:
+                        win.showNormal(); win.raise_(); win.activateWindow()
+                    except Exception:
+                        pass
+                # Read/close socket
+                if sock is not None:
+                    try:
+                        # drain any bytes
+                        _ = sock.readAll()
+                    except Exception:
+                        pass
+                    try:
+                        sock.disconnectFromServer()
+                    except Exception:
+                        pass
+            if server.listen(server_name):
+                try:
+                    server.newConnection.connect(_on_new_conn)
+                    # Keep reference on window to avoid GC
+                    setattr(win, '_single_server', server)
+                except Exception:
+                    pass
+        except Exception:
+            pass
     except Exception as e:
         _debug_log('Exception during MainWindow init:')
         _debug_log(''.join(traceback.format_exception(e)))

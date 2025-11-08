@@ -2,7 +2,7 @@
 ; Bygg med: iscc installer.iss
 
 #define MyAppName "Launchpad Mapper"
-#define MyAppVersion "0.1.4"  ; Synka med pyproject.toml version (uppdatera vid release)
+#define MyAppVersion "0.1.5"  ; Synka med pyproject.toml version (uppdatera vid release)
 #define MyAppPublisher "Carl Jagemalm"
 #define MyAppExeName "LaunchpadMapper.exe"
 
