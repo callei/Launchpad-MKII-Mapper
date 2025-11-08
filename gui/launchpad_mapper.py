@@ -16,6 +16,8 @@ import yaml
 import re
 import traceback
 import shutil
+import atexit
+import signal
 
 """Main GUI module for Launchpad Mapper.
 
@@ -33,6 +35,7 @@ if '--debug' in sys.argv:
         pass
 
 _LOG_PATH = None
+_GLOBAL_WIN = None  # Set to MainWindow instance for global cleanup
 def _debug_log(msg: str):
     """Write a line to the debug log if debug mode is active."""
     global _LOG_PATH
@@ -319,7 +322,7 @@ class SettingsPopup(FramelessPopup):
         self._ui_cfg = dict(ui_cfg) if isinstance(ui_cfg, dict) else {}
         lay = self.content_layout()
 
-        lay.addWidget(QLabel("When starting the app:"))
+        lay.addWidget(QLabel("When starting the app (applies to autostart only):"))
         self.start_mode = QComboBox()
         self.start_mode.addItems(["normal", "minimized", "hidden"])  # hidden = tray only
         current_mode = (self._ui_cfg.get("start_mode") or ("hidden" if self._ui_cfg.get("start_hidden") else "normal")).lower()
@@ -338,6 +341,9 @@ class SettingsPopup(FramelessPopup):
         if not is_frozen:
             self.autostart_cb.setEnabled(True)
             self.autostart_cb.setToolTip("Requires installed app to reliably start with Windows.")
+        # Enable start_mode only when autostart is checked
+        self.start_mode.setEnabled(self.autostart_cb.isChecked())
+        self.autostart_cb.toggled.connect(self.start_mode.setEnabled)
 
         btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         lay.addWidget(btns)
@@ -1063,6 +1069,9 @@ class MainWindow(QMainWindow):
         # Start hidden om flagga givits
         if start_hidden:
             self.hide()
+        # Expose global reference for cleanup handlers
+        global _GLOBAL_WIN
+        _GLOBAL_WIN = self
 
     # ---- Custom Title Bar Support ----
     def _build_title_bar(self):
@@ -2200,11 +2209,11 @@ class MainWindow(QMainWindow):
                 mode = (res.get('start_mode') or 'normal').lower()
                 if mode not in ('normal','minimized','hidden'):
                     mode = 'normal'
+                # Always persist start_mode; manual launches ignore it (applied only if autostart)
                 ui['start_mode'] = mode
                 ui['minimize_to_tray'] = bool(res.get('minimize_to_tray'))
                 ui['autostart_enabled'] = bool(res.get('autostart_enabled'))
-                # Backward compatibility field
-                ui['start_hidden'] = (mode == 'hidden')
+                ui['start_hidden'] = (mode == 'hidden') and bool(res.get('autostart_enabled'))
                 self.config['ui'] = ui
                 # Update Windows autostart
                 if sys.platform == 'win32':
@@ -2213,7 +2222,10 @@ class MainWindow(QMainWindow):
                         QMessageBox.warning(self, 'Autostart', 'Failed to update Windows autostart registry.')
                 self.save_config(silent=True)
                 # Apply mode immediately
-                if mode == 'normal':
+                if not ui['autostart_enabled']:
+                    # Manual run always shown normal regardless of chosen mode when autostart is off
+                    self.showNormal(); self.raise_(); self.activateWindow()
+                elif mode == 'normal':
                     self.showNormal(); self.raise_(); self.activateWindow()
                 elif mode == 'minimized':
                     self.show(); self.showMinimized()
@@ -2234,12 +2246,13 @@ class MainWindow(QMainWindow):
                 if enable:
                     if getattr(sys, 'frozen', False):
                         exe_path = Path(sys.executable).resolve()
-                        cmd = f'"{exe_path}"'
+                        # Pass an explicit flag so the app knows this was an autostart launch
+                        cmd = f'"{exe_path}" --autostart'
                     else:
                         # Start via python executable to ensure correct interpreter in dev mode
                         py = Path(sys.executable).resolve()
                         script = Path(__file__).resolve()
-                        cmd = f'"{py}" "{script}"'
+                        cmd = f'"{py}" "{script}" --autostart'
                     winreg.SetValueEx(key, value_name, 0, winreg.REG_SZ, cmd)
                 else:
                     try:
@@ -2794,7 +2807,15 @@ class CaretSpinStyle(QProxyStyle):
 
 
 def main():
-    # Determine startup mode (normal|minimized|hidden) with backward compatible flags
+    # Determine startup mode: apply config only for autostart; manual runs default to normal
+    is_autostart = False
+    if '--autostart' in sys.argv:
+        is_autostart = True
+        try:
+            sys.argv.remove('--autostart')
+        except ValueError:
+            pass
+    # Dev/legacy override: allow hidden via flag when running from source
     cli_hidden = False
     if '--background' in sys.argv or '--hidden' in sys.argv:
         cli_hidden = True
@@ -2819,8 +2840,10 @@ def main():
         pass
     if cli_hidden:
         effective_mode = 'hidden'
-    else:
+    elif is_autostart:
         effective_mode = saved_mode if saved_mode in ('normal','minimized','hidden') else 'normal'
+    else:
+        effective_mode = 'normal'
     # Optional: --preset <name> to force-load a layer preset file (presets/<name>.yaml) after config
     preset_to_load = None
     if '--preset' in sys.argv:
@@ -2860,6 +2883,44 @@ def main():
         if effective_mode == 'minimized':
             win.showMinimized()
         _debug_log('win.show() returned. Entering event loop...')
+    # --- Cleanup hooks (best-effort) ---
+    def _cleanup_leds_and_ports():
+        try:
+            w = _GLOBAL_WIN
+            if w and getattr(w, 'lp', None):
+                try:
+                    w.lp.clear(full=True)
+                except Exception:
+                    pass
+                try:
+                    w.lp.close()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+    try:
+        app.aboutToQuit.connect(_cleanup_leds_and_ports)
+    except Exception:
+        pass
+    try:
+        atexit.register(_cleanup_leds_and_ports)
+    except Exception:
+        pass
+    def _signal_handler(signum, frame):
+        _cleanup_leds_and_ports()
+        try:
+            sys.exit(0)
+        except SystemExit:
+            raise
+        except Exception:
+            pass
+    for _sig_name in ('SIGINT', 'SIGTERM', 'SIGBREAK'):
+        s = getattr(signal, _sig_name, None)
+        if s is not None:
+            try:
+                signal.signal(s, _signal_handler)
+            except Exception:
+                pass
     try:
         rc = app.exec()
         _debug_log(f'App exited with code {rc}')
