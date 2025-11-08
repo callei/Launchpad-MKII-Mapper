@@ -8,7 +8,7 @@ param(
   [string]$Company = 'malm',
   [string]$Product = 'Launchpad MKII Mapper',
   [string]$Copyright = '(c) 2025 Carl Jagemalm',
-  [string]$Description = 'Launchpad pad mapping & animation tool'
+  [string]$Description = 'Launchpad Mapper'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -23,9 +23,15 @@ if ($Clean) {
 $pythonExe = Join-Path $PSScriptRoot '.venv/Scripts/python.exe'
 if (-not (Test-Path $pythonExe)) { $pythonExe = 'python' }
 
-# Ensure dependencies installed (i vald tolk)
-Write-Host 'Ensuring dependencies installed (PySide6, mido, python-rtmidi, pyyaml, pywin32)...'
-& $pythonExe -m pip install --disable-pip-version-check PySide6 mido python-rtmidi pyyaml pywin32 | Out-Null
+# Ensure dependencies installed (in chosen interpreter). Include PyInstaller if missing.
+Write-Host 'Ensuring dependencies installed (PyInstaller, PySide6, mido, python-rtmidi, pyyaml, pywin32)...'
+& $pythonExe -m pip install --disable-pip-version-check PyInstaller PySide6 mido python-rtmidi pyyaml pywin32 | Out-Null
+try {
+  & $pythonExe -m PyInstaller --version | Out-Null
+} catch {
+  Write-Warning 'PyInstaller still not accessible; trying explicit install.'
+  & $pythonExe -m pip install PyInstaller | Out-Null
+}
 
 $iconPath = Join-Path $PSScriptRoot 'icons/app.ico'
 
