@@ -34,3 +34,9 @@ Thumbs.db
 # git.txt
 git.txt
 file_versions_info.txt
+file_version_info.txt
+
+# Build scripts and local config
+build_exe.ps1
+installer.iss
+config.yaml

@@ -1,75 +1,103 @@
 # Launchpad Mapper
+A powerful Windows desktop application built with PySide6 to map your Novation Launchpad MKII pads to custom actions, colors, and animations.
 
-A Windows desktop app (PySide6) for mapping Novation Launchpad pads to actions and lighting them with colors and animations. It supports layers, per-pad actions (launch app, run process, hotkeys, media controls), presets, and simple pad animations.
+<!-- Screenshots Section -->
+<!-- <img src="path/to/screenshot1.png" width="32%"><img src="path/to/screenshot2.png" width="32%"> -->
+
+> [!WARNING]
+> **Disclaimer:** This software is designed specifically for the Novation Launchpad MKII. While it may work with other MIDI controllers, full compatibility is not guaranteed.
+
+# Configuration
+
+> [!CAUTION]
+> Always backup your existing presets before updating or making major changes.
+
+> [!IMPORTANT]
+> User data and presets are stored in `%APPDATA%/LaunchpadMapper`.
+> **Crucial:** If you are manually editing YAML files, ensure valid syntax to avoid crashes on startup.
+
+<details>
+  <summary>Manual Installation (For Developers)</summary>
+  
+  1. **Clone the repository:**
+     ```powershell
+     git clone https://github.com/callei/Launchpad-MKII-Mapper.git
+     cd Launchpad-MKII-Mapper
+     ```
+
+  2. **Set up Environment:**
+     Ensure you have Python 3.11 installed.
+     ```powershell
+     python -m venv .venv
+     .venv\Scripts\activate
+     pip install -r requirements.txt
+     ```
+     *(Note: You might need to install dependencies manually if no requirements.txt exists, see "Download Suggestions" below)*
+
+  3. **Run from source:**
+     ```powershell
+     python gui/launchpad_mapper.py
+     ```
+</details>
 
 ## Features
-- 8x8 grid + control pads UI with live color preview
-- Layers with quick navigation pads
-- Actions per pad: color only, run process, launch app, hotkey sequences, media controls, switch layer, start animation
-- Presets: save/load layer mappings as YAML
-- Simple keyframe animations (per-pad colors, durations, loop)
-- Settings gear (top bar) with:
-	- Startup mode: normal, minimized, or hidden (tray only)
-	- Close to tray (keep running)
-	- Autostart with Windows (HKCU Run)
-- Auto-loads your last used layer preset (falls back to `empty` if present)
-- System tray icon with quick actions (Open, Reconnect, Settings, Quit)
-- Works without Launchpad connected (offline UI); virtual mode fallback if MIDI ports are busy
 
-## Install (Users)
-Download the latest installer from GitHub Releases and run it.
-- App installs under Program Files
-- User data under `%APPDATA%/LaunchpadMapper` (no admin needed for presets)
-- Uninstall removes `%APPDATA%/LaunchpadMapper` (config + presets)
+<details>
+  <summary> Grid & Mapping</summary>
+  
+  ## Overview
+  - **Interface**: Full 8x8 grid + control pads UI with live color preview.
+  - **Layers**: Support for multiple layers with quick navigation pads.
+  - **Offline Mode**: Works fully without a Launchpad connected (Virtual Mode).
+</details>
 
-Startup and autostart:
-- Control startup behavior in-app via the Settings gear (normal, minimized, hidden)
-- Toggle “Start with Windows” in Settings (uses HKCU\Run; no extra flags)
+<details>
+  <summary> Actions & Macros</summary>
+  
+  ## Capabilities
+  Assign various actions to any pad:
+  - **Launch App**: Open any executable or file.
+  - **Run Process**: Execute background commands.
+  - **Hotkeys**: Send keyboard shortcuts and sequences.
+  - **Media Controls**: Play/Pause, Volume, Next/Prev Track.
+  - **Switch Layer**: Jump between different mapping layers.
+</details>
 
-Command-line (for development/testing):
-- `--hidden` (or legacy `--background`) to start hidden in tray
-- `--preset <name>` to load a preset after start
-- `--debug` to write a startup log to `%APPDATA%/LaunchpadMapper/startup.log`
+<details>
+  <summary> Animations & Colors</summary>
+  
+  ## Visuals
+  - **Static Colors**: Simple color assignment per pad.
+  - **Animations**: Create simple keyframe animations with custom durations and looping.
+</details>
 
-## Presets & Config
-- Config: `%APPDATA%/LaunchpadMapper/config.yaml`
-- Presets: `%APPDATA%/LaunchpadMapper/presets/*.yaml`
-- On first run, default presets shipped with the app are copied to AppData once
+<details>
+  <summary> System Integration</summary>
+  
+  ## Settings
+  - **Startup**: Options for Normal, Minimized, or Hidden (Tray only).
+  - **Autostart**: Toggle "Start with Windows" directly in settings.
+  - **Tray Icon**: Quick access to Open, Reconnect, Settings, and Quit.
+</details>
 
-## Build (Developers)
-Prereqs: Python 3.11, a venv, Inno Setup 6 for installer.
+## Command Line Arguments
 
-Create/refresh the EXE:
-```powershell
-.\build_exe.ps1
-# or
-.\build_exe.ps1 -Clean
+`--hidden` - Start the application hidden in the system tray.  
+`--preset <name>` - Load a specific preset immediately after start.  
+`--debug` - Write a startup log to `%APPDATA%/LaunchpadMapper/startup.log`.
+
+## Download Suggestions (Dev Dependencies)
+
+To build or run this project from source, you will need these packages:
+
+```txt
+PySide6
+mido
+python-rtmidi
+pyyaml
+pywin32
 ```
-
-Run from source (PowerShell on Windows):
-```powershell
-.\.venv\Scripts\python.exe .\gui\launchpad_mapper.py
-# Hidden (tray) – prefer the Settings gear in-app for persistent behavior
-.\.venv\Scripts\python.exe .\gui\launchpad_mapper.py --hidden
-# With preset
-.\.venv\Scripts\python.exe .\gui\launchpad_mapper.py --preset empty
-```
-
-Build installer (requires Inno Setup 6):
-```powershell
-"C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe" .\installer.iss
-```
-
-## Packaging Notes
-- PyInstaller onedir build with windowed bootloader (no console)
-- Hidden imports for `win32com.client` (pywin32) and MIDI backend handled in `build_exe.ps1`
-- Fonts and icons are bundled; custom font applied at runtime
-
-## Troubleshooting
-- Launchpad not found / device busy: The app auto-falls back to a virtual mode; you can still edit mappings and animations.
-- MIDI backend: ensure `mido` and `python-rtmidi` are installed in your venv; packaged builds bundle `_rtmidi`.
-- Installed apps list empty in App Picker: install `pywin32` (win32com). Packaged builds include it.
-- Debug startup: run with `--debug` (or set env `LAUNCHPADMAPPER_DEBUG=1`) and inspect `%APPDATA%/LaunchpadMapper/startup.log`.
 
 ## License
-See `LICENSE`.
+
+This project is licensed under a custom license. See the [LICENSE](LICENSE) file for details.
