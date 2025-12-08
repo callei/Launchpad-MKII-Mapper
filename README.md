@@ -9,12 +9,8 @@ A powerful Windows desktop application built with PySide6 to map your Novation L
 
 # Configuration
 
-> [!CAUTION]
-> Always backup your existing presets before updating or making major changes.
-
-> [!IMPORTANT]
+> [!NOTE]
 > User data and presets are stored in `%APPDATA%/LaunchpadMapper`.
-> **Crucial:** If you are manually editing YAML files, ensure valid syntax to avoid crashes on startup.
 
 <details>
   <summary>Manual Installation (For Developers)</summary>
@@ -28,8 +24,7 @@ A powerful Windows desktop application built with PySide6 to map your Novation L
   2. **Set up Environment:**
      Ensure you have Python 3.11 installed.
      ```powershell
-     python -m venv .venv
-     .venv\Scripts\activate
+     create and activate a venv if you want.
      pip install -r requirements.txt
      ```
      *(Note: You might need to install dependencies manually if no requirements.txt exists, see "Download Suggestions" below)*
