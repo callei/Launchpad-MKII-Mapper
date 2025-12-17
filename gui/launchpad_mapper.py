@@ -23,19 +23,7 @@ import atexit
 import signal
 import getpass
 
-"""Main GUI module for Launchpad Mapper.
-
-Release build: verbose startup logging removed. To enable lightweight
-debug logging create an environment variable LAUNCHPADMAPPER_DEBUG=1
-or launch the app with the --debug flag. When enabled (and frozen),
-log lines are written to %APPDATA%/LaunchpadMapper/startup.log.
-
-Security Features:
-- Command injection prevention via shell=False in subprocess calls
-- Path traversal protection for file operations
-- Safe YAML loading with yaml.safe_load()
-- Input validation for user-provided paths and commands
-"""
+# Main GUI module for Launchpad Mapper!
 
 DEBUG_MODE = ('--debug' in sys.argv) or os.environ.get('LAUNCHPADMAPPER_DEBUG') == '1'
 if '--debug' in sys.argv:
@@ -47,7 +35,7 @@ if '--debug' in sys.argv:
 _LOG_PATH = None
 _GLOBAL_WIN = None  # Set to MainWindow instance for global cleanup
 def _debug_log(msg: str):
-    """Write a line to the debug log if debug mode is active."""
+    # Write a line to the debug log if debug mode is active.
     global _LOG_PATH
     if not DEBUG_MODE:
         return
@@ -64,11 +52,10 @@ def _debug_log(msg: str):
     except Exception:
         pass
 
-"""Launchpad Mapper GUI.
-
+# Launchpad Mapper GUI.
+"""
 Fixes applied:
-- Ensures parent project directory is on sys.path so the backend import works when running `python gui/launchpad_mapper.py`.
-- Adds color-only pad mapping (assign a color without an action).
+- Adds color-only pad mapping (assign a color without an action), reverted to no color before.
 """
 
 # Ensure project root is on sys.path for direct script execution
@@ -90,18 +77,7 @@ PRESETS_DIR = APPDATA_DIR / "presets"
 
 # Security helper functions
 def _is_safe_path(base_dir: Path, user_path: Path) -> bool:
-    """Validate that user_path is within base_dir to prevent path traversal attacks.
-    
-    Args:
-        base_dir: The allowed base directory
-        user_path: The user-provided path to validate
-        
-    Returns:
-        True if path is safe, False otherwise
-        
-    Security: Uses relative_to() which properly validates directory boundaries
-    and cannot be bypassed with crafted paths like '../../../etc/passwd'.
-    """
+    #Validate that user_path is within base_dir to prevent path traversal attacks.
     try:
         # Resolve both paths to absolute, canonical paths
         base = base_dir.resolve()
@@ -114,25 +90,7 @@ def _is_safe_path(base_dir: Path, user_path: Path) -> bool:
         # ValueError raised if target is not relative to base
         return False
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+# --------- Main Window Class ---------------------------------------------- #
 
 from PySide6.QtGui import QIcon, QAction
 from PySide6.QtWidgets import QSystemTrayIcon, QMenu
@@ -2224,7 +2182,12 @@ def _send_vk_sequence(down_then_up):
         user32.keybd_event(vk, 0, KEYEVENTF_KEYUP, 0)
 
 def MainWindow__perform_hotkey(self, combo: str):
-    """Execute a hotkey or a sequence of hotkey chords.
+    """Execute a hotkey or a sequence of hotkey chords i.e. a macro!
+
+    # NOTE: If you want to allow advanced shell features (such as pipes, redirection, or shell built-ins),
+    # you must change the implementation to use shell=True and pass the command as a string to subprocess.
+    # Be aware that this introduces significant security risks (command injection).
+    # Only do this if you fully trust the source of the commands.
 
     Syntax examples:
       ctrl+shift+esc            (single chord)
@@ -2237,7 +2200,7 @@ def MainWindow__perform_hotkey(self, combo: str):
     """
     if not combo:
         return
-    # Normalize separators: allow '>' or ','
+    # Normalize separators: allow '>' or ','.
     seq_delims = re.split(r'[>,]', combo)
     chords = [c.strip() for c in seq_delims if c.strip()]
     if not chords:
