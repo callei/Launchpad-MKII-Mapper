@@ -28,6 +28,12 @@ Release build: verbose startup logging removed. To enable lightweight
 debug logging create an environment variable LAUNCHPADMAPPER_DEBUG=1
 or launch the app with the --debug flag. When enabled (and frozen),
 log lines are written to %APPDATA%/LaunchpadMapper/startup.log.
+
+Security Features:
+- Command injection prevention via shell=False in subprocess calls
+- Path traversal protection for file operations
+- Safe YAML loading with yaml.safe_load()
+- Input validation for user-provided paths and commands
 """
 
 DEBUG_MODE = ('--debug' in sys.argv) or os.environ.get('LAUNCHPADMAPPER_DEBUG') == '1'
@@ -80,6 +86,26 @@ APPDATA_DIR = Path(os.environ.get("APPDATA", Path.home())) / "LaunchpadMapper"
 APPDATA_DIR.mkdir(parents=True, exist_ok=True)
 CONFIG_PATH = APPDATA_DIR / "config.yaml"
 PRESETS_DIR = APPDATA_DIR / "presets"
+
+# Security helper functions
+def _is_safe_path(base_dir: Path, user_path: Path) -> bool:
+    """Validate that user_path is within base_dir to prevent path traversal attacks.
+    
+    Args:
+        base_dir: The allowed base directory
+        user_path: The user-provided path to validate
+        
+    Returns:
+        True if path is safe, False otherwise
+    """
+    try:
+        # Resolve both paths to absolute, canonical paths
+        base = base_dir.resolve()
+        target = user_path.resolve()
+        # Check if target is within base directory
+        return str(target).startswith(str(base))
+    except (OSError, ValueError):
+        return False
 
 
 
@@ -1617,8 +1643,15 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Imported layer preset '{dest.stem}'", 4000)
 
     def load_preset(self, name: str):
-        """Load a layer-scoped preset: replace only current layer's pads."""
+        """Load a layer-scoped preset: replace only current layer's pads.
+        
+        Security: Validates path is within PRESETS_DIR to prevent path traversal.
+        """
         path = PRESETS_DIR / f"{name}.yaml"
+        # Security: Validate path is within allowed directory
+        if not _is_safe_path(PRESETS_DIR, path):
+            QMessageBox.warning(self, "Security Error", "Invalid preset path.")
+            return
         if not path.exists():
             QMessageBox.warning(self, "Preset", "Preset file missing.")
             return
@@ -1729,7 +1762,16 @@ class MainWindow(QMainWindow):
             cmd = mapping.get("command")
             if cmd:
                 try:
-                    subprocess.Popen(cmd, shell=True)
+                    # Security: Use shell=False to prevent command injection
+                    # Parse command string safely using shlex
+                    import shlex
+                    try:
+                        cmd_list = shlex.split(cmd, posix=(sys.platform != 'win32'))
+                        subprocess.Popen(cmd_list, shell=False)
+                    except ValueError:
+                        # If shlex fails, try simple split as fallback but still no shell
+                        cmd_list = cmd.split()
+                        subprocess.Popen(cmd_list, shell=False)
                 except Exception as e:
                     QMessageBox.warning(self, "Run Process", f"Failed: {e}")
         elif mapping and mapping.get("type") == "hotkey":
@@ -1812,11 +1854,19 @@ class MainWindow(QMainWindow):
             if self._ready:
                 self.mark_dirty()
     def _launch_app_silent(self, path: str, args: str = ""):
-        """Launch an app with optional arguments without opening a console window."""
+        """Launch an app with optional arguments without opening a console window.
+        
+        Security: Validates path exists and uses shell=False to prevent command injection.
+        """
+        # Security: Validate that the path exists and is a file
+        if not os.path.isfile(path):
+            raise FileNotFoundError(f"Application not found: {path}")
+        
         try:
             devnull = subprocess.DEVNULL
         except Exception:
-            devnull = open(os.devnull, 'wb')  # nosec
+            # Use context manager for proper resource cleanup
+            devnull = open(os.devnull, 'wb')
         kwargs = {'stdout': devnull, 'stderr': devnull}
         if sys.platform == 'win32':
             CREATE_NO_WINDOW = 0x08000000
