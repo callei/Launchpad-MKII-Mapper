@@ -1,6 +1,7 @@
 import sys
 import subprocess
 import os
+import shlex
 from pathlib import Path
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QGridLayout, QPushButton, QVBoxLayout,
@@ -1764,7 +1765,6 @@ class MainWindow(QMainWindow):
                 try:
                     # Security: Use shell=False to prevent command injection
                     # Parse command string safely using shlex
-                    import shlex
                     try:
                         cmd_list = shlex.split(cmd, posix=(sys.platform != 'win32'))
                         subprocess.Popen(cmd_list, shell=False)
@@ -1862,10 +1862,13 @@ class MainWindow(QMainWindow):
         if not os.path.isfile(path):
             raise FileNotFoundError(f"Application not found: {path}")
         
+        # Use subprocess.DEVNULL for automatic resource management
+        # subprocess.DEVNULL is available in Python 3.3+ and handles cleanup automatically
         try:
             devnull = subprocess.DEVNULL
-        except Exception:
-            # Use context manager for proper resource cleanup
+        except AttributeError:
+            # Fallback for older Python versions (though this app requires 3.11+)
+            # The file handle is passed to Popen which takes ownership and closes it
             devnull = open(os.devnull, 'wb')
         kwargs = {'stdout': devnull, 'stderr': devnull}
         if sys.platform == 'win32':
@@ -1877,21 +1880,20 @@ class MainWindow(QMainWindow):
         # Build command
         cmd = [path]
         if args:
-            # naive split; Windows-friendly: keep as one string lets Popen pass to CreateProcess properly
+            # Parse arguments safely for Windows compatibility
             kwargs['shell'] = False
             try:
-                import shlex
                 parts = shlex.split(args, posix=False)
                 cmd.extend(parts)
             except Exception:
                 # fallback: pass as single parameter
                 cmd.append(args)
         try:
-            subprocess.Popen(cmd, **kwargs)
+            subprocess.Popen(cmd, shell=False, **kwargs)
         except Exception as e:
-            # Fallback to plain open
+            # Fallback to plain execution (still with shell=False for security)
             try:
-                subprocess.Popen(path)
+                subprocess.Popen([path], shell=False, **kwargs)
             except Exception:
                 raise e
     def update_grid(self):
