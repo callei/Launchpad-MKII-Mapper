@@ -88,10 +88,6 @@ A powerful Windows desktop application built with PySide6 to map your Novation L
 `--debug` - Write a startup log to `%APPDATA%/LaunchpadMapper/startup.log`.  
 `--autostart` - Used internally when the app is started automatically with Windows. Not intended for manual use.
 
-## Download Suggestions (Dev Dependencies)
-
-<!-- requirements.txt now contains all dependencies. -->
-
 ## License
 
 This project is licensed under a custom license. See the [LICENSE](LICENSE) file for details.
