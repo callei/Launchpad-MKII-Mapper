@@ -1,6 +1,7 @@
 import sys
 import subprocess
 import os
+import shlex
 from pathlib import Path
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QGridLayout, QPushButton, QVBoxLayout,
@@ -28,6 +29,12 @@ Release build: verbose startup logging removed. To enable lightweight
 debug logging create an environment variable LAUNCHPADMAPPER_DEBUG=1
 or launch the app with the --debug flag. When enabled (and frozen),
 log lines are written to %APPDATA%/LaunchpadMapper/startup.log.
+
+Security Features:
+- Command injection prevention via shell=False in subprocess calls
+- Path traversal protection for file operations
+- Safe YAML loading with yaml.safe_load()
+- Input validation for user-provided paths and commands
 """
 
 DEBUG_MODE = ('--debug' in sys.argv) or os.environ.get('LAUNCHPADMAPPER_DEBUG') == '1'
@@ -80,6 +87,32 @@ APPDATA_DIR = Path(os.environ.get("APPDATA", Path.home())) / "LaunchpadMapper"
 APPDATA_DIR.mkdir(parents=True, exist_ok=True)
 CONFIG_PATH = APPDATA_DIR / "config.yaml"
 PRESETS_DIR = APPDATA_DIR / "presets"
+
+# Security helper functions
+def _is_safe_path(base_dir: Path, user_path: Path) -> bool:
+    """Validate that user_path is within base_dir to prevent path traversal attacks.
+    
+    Args:
+        base_dir: The allowed base directory
+        user_path: The user-provided path to validate
+        
+    Returns:
+        True if path is safe, False otherwise
+        
+    Security: Uses relative_to() which properly validates directory boundaries
+    and cannot be bypassed with crafted paths like '../../../etc/passwd'.
+    """
+    try:
+        # Resolve both paths to absolute, canonical paths
+        base = base_dir.resolve()
+        target = user_path.resolve()
+        # Use relative_to() which raises ValueError if target is not under base
+        # This is more secure than string comparison
+        target.relative_to(base)
+        return True
+    except (OSError, ValueError):
+        # ValueError raised if target is not relative to base
+        return False
 
 
 
@@ -1617,8 +1650,15 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Imported layer preset '{dest.stem}'", 4000)
 
     def load_preset(self, name: str):
-        """Load a layer-scoped preset: replace only current layer's pads."""
+        """Load a layer-scoped preset: replace only current layer's pads.
+        
+        Security: Validates path is within PRESETS_DIR to prevent path traversal.
+        """
         path = PRESETS_DIR / f"{name}.yaml"
+        # Security: Validate path is within allowed directory
+        if not _is_safe_path(PRESETS_DIR, path):
+            QMessageBox.warning(self, "Security Error", "Invalid preset path.")
+            return
         if not path.exists():
             QMessageBox.warning(self, "Preset", "Preset file missing.")
             return
@@ -1729,7 +1769,15 @@ class MainWindow(QMainWindow):
             cmd = mapping.get("command")
             if cmd:
                 try:
-                    subprocess.Popen(cmd, shell=True)
+                    # Security: Use shell=False to prevent command injection
+                    # Parse command string safely using shlex
+                    try:
+                        cmd_list = shlex.split(cmd, posix=(sys.platform != 'win32'))
+                        subprocess.Popen(cmd_list, shell=False)
+                    except ValueError:
+                        # If shlex fails, try simple split as fallback but still no shell
+                        cmd_list = cmd.split()
+                        subprocess.Popen(cmd_list, shell=False)
                 except Exception as e:
                     QMessageBox.warning(self, "Run Process", f"Failed: {e}")
         elif mapping and mapping.get("type") == "hotkey":
@@ -1812,12 +1860,17 @@ class MainWindow(QMainWindow):
             if self._ready:
                 self.mark_dirty()
     def _launch_app_silent(self, path: str, args: str = ""):
-        """Launch an app with optional arguments without opening a console window."""
-        try:
-            devnull = subprocess.DEVNULL
-        except Exception:
-            devnull = open(os.devnull, 'wb')  # nosec
-        kwargs = {'stdout': devnull, 'stderr': devnull}
+        """Launch an app with optional arguments without opening a console window.
+        
+        Security: Validates path exists and uses shell=False to prevent command injection.
+        """
+        # Security: Validate that the path exists and is a file
+        if not os.path.isfile(path):
+            raise FileNotFoundError(f"Application not found: {path}")
+        
+        # Use subprocess.DEVNULL for automatic resource management
+        # subprocess.DEVNULL is available in Python 3.3+ (app requires 3.11+)
+        kwargs = {'stdout': subprocess.DEVNULL, 'stderr': subprocess.DEVNULL}
         if sys.platform == 'win32':
             CREATE_NO_WINDOW = 0x08000000
             si = subprocess.STARTUPINFO()
@@ -1827,21 +1880,19 @@ class MainWindow(QMainWindow):
         # Build command
         cmd = [path]
         if args:
-            # naive split; Windows-friendly: keep as one string lets Popen pass to CreateProcess properly
-            kwargs['shell'] = False
+            # Parse arguments safely for Windows compatibility
             try:
-                import shlex
                 parts = shlex.split(args, posix=False)
                 cmd.extend(parts)
             except Exception:
                 # fallback: pass as single parameter
                 cmd.append(args)
         try:
-            subprocess.Popen(cmd, **kwargs)
+            subprocess.Popen(cmd, shell=False, **kwargs)
         except Exception as e:
-            # Fallback to plain open
+            # Fallback to plain execution (still with shell=False for security)
             try:
-                subprocess.Popen(path)
+                subprocess.Popen([path], shell=False, **kwargs)
             except Exception:
                 raise e
     def update_grid(self):
