@@ -2,6 +2,7 @@
 A powerful Windows desktop application built with PySide6 to map your Novation Launchpad MKII pads to custom actions, colors, and animations.
 
 <!-- Screenshots Section -->
+<!-- I should implement this soon but man I don't want to right now.>
 <!-- <img src="path/to/screenshot1.png" width="32%"><img src="path/to/screenshot2.png" width="32%"> -->
 
 > [!WARNING]
@@ -13,7 +14,7 @@ A powerful Windows desktop application built with PySide6 to map your Novation L
 > User data and presets are stored in `%APPDATA%/LaunchpadMapper`.
 
 <details>
-  <summary>Manual Installation (For Developers)</summary>
+  <summary>Manual Installation</summary>
   
   1. **Clone the repository:**
      ```powershell
@@ -22,12 +23,15 @@ A powerful Windows desktop application built with PySide6 to map your Novation L
      ```
 
   2. **Set up Environment:**
-     Ensure you have Python 3.11 installed.
-     ```powershell
-     create and activate a venv if you want.
-     pip install -r requirements.txt
-     ```
-     *(Note: You might need to install dependencies manually if no requirements.txt exists, see "Download Suggestions" below)*
+    Ensure you have Python 3.11 installed.
+    ```powershell
+    # (Optional) Create and activate a virtual environment
+    python -m venv .venv
+    .venv\Scripts\activate  # On Windows
+    # Install dependencies
+    pip install -r requirements.txt
+    ```
+    *(All required dependencies are listed in `requirements.txt`)*
 
   3. **Run from source:**
      ```powershell
@@ -77,21 +81,16 @@ A powerful Windows desktop application built with PySide6 to map your Novation L
 
 ## Command Line Arguments
 
+
 `--hidden` - Start the application hidden in the system tray.  
+`--background` - Alias for `--hidden`. Starts the app hidden in the system tray (for compatibility with some launchers/scripts).  
 `--preset <name>` - Load a specific preset immediately after start.  
-`--debug` - Write a startup log to `%APPDATA%/LaunchpadMapper/startup.log`.
+`--debug` - Write a startup log to `%APPDATA%/LaunchpadMapper/startup.log`.  
+`--autostart` - Used internally when the app is started automatically with Windows. Not intended for manual use.
 
 ## Download Suggestions (Dev Dependencies)
 
-To build or run this project from source, you will need these packages:
-
-```txt
-PySide6
-mido
-python-rtmidi
-pyyaml
-pywin32
-```
+<!-- requirements.txt now contains all dependencies. -->
 
 ## License
 
