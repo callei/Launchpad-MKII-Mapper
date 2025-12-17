@@ -74,14 +74,22 @@ Added a security helper function `_is_safe_path()` that validates paths are with
 
 ```python
 def _is_safe_path(base_dir: Path, user_path: Path) -> bool:
-    """Validate that user_path is within base_dir to prevent path traversal attacks."""
+    """Validate that user_path is within base_dir to prevent path traversal attacks.
+    
+    Security: Uses relative_to() which properly validates directory boundaries
+    and cannot be bypassed with crafted paths like '../../../etc/passwd'.
+    """
     try:
         base = base_dir.resolve()
         target = user_path.resolve()
-        return str(target).startswith(str(base))
+        # Use relative_to() which raises ValueError if target is not under base
+        target.relative_to(base)
+        return True
     except (OSError, ValueError):
         return False
 ```
+
+**Security Note**: The implementation uses `Path.relative_to()` method instead of string comparison. This is more secure as string comparison (`startswith()`) can be bypassed with carefully crafted paths. The `relative_to()` method properly validates that the target path is within the base directory.
 
 Applied to:
 - `load_preset()` - validates preset files are in PRESETS_DIR
@@ -134,8 +142,15 @@ def _launch_app_silent(self, path: str, args: str = ""):
     # Security: Validate that the path exists and is a file
     if not os.path.isfile(path):
         raise FileNotFoundError(f"Application not found: {path}")
-    # ... rest of function
+    # ... rest of function with shell=False
 ```
+
+**Security Considerations**:
+- The application validates that the path exists and is a regular file
+- All subprocess calls use `shell=False` to prevent command injection
+- Arguments are safely parsed using `shlex.split()`
+- User is responsible for selecting which applications to launch via the GUI
+- For enterprise deployments, consider implementing an allowlist of permitted applications
 
 ---
 
@@ -228,7 +243,8 @@ To verify security fixes:
 ### Short Term (Next Release)
 1. Add logging for security-relevant events (failed path validations, etc.)
 2. Implement rate limiting for process launches
-3. Add configuration option to restrict allowed executables
+3. Add configuration option to restrict allowed executables (application allowlist)
+4. Consider adding path validation for launched applications to restrict to standard program directories
 
 ### Medium Term
 1. Consider code signing for distributed executables
