@@ -98,14 +98,20 @@ def _is_safe_path(base_dir: Path, user_path: Path) -> bool:
         
     Returns:
         True if path is safe, False otherwise
+        
+    Security: Uses relative_to() which properly validates directory boundaries
+    and cannot be bypassed with crafted paths like '../../../etc/passwd'.
     """
     try:
         # Resolve both paths to absolute, canonical paths
         base = base_dir.resolve()
         target = user_path.resolve()
-        # Check if target is within base directory
-        return str(target).startswith(str(base))
+        # Use relative_to() which raises ValueError if target is not under base
+        # This is more secure than string comparison
+        target.relative_to(base)
+        return True
     except (OSError, ValueError):
+        # ValueError raised if target is not relative to base
         return False
 
 
@@ -1863,14 +1869,8 @@ class MainWindow(QMainWindow):
             raise FileNotFoundError(f"Application not found: {path}")
         
         # Use subprocess.DEVNULL for automatic resource management
-        # subprocess.DEVNULL is available in Python 3.3+ and handles cleanup automatically
-        try:
-            devnull = subprocess.DEVNULL
-        except AttributeError:
-            # Fallback for older Python versions (though this app requires 3.11+)
-            # The file handle is passed to Popen which takes ownership and closes it
-            devnull = open(os.devnull, 'wb')
-        kwargs = {'stdout': devnull, 'stderr': devnull}
+        # subprocess.DEVNULL is available in Python 3.3+ (app requires 3.11+)
+        kwargs = {'stdout': subprocess.DEVNULL, 'stderr': subprocess.DEVNULL}
         if sys.platform == 'win32':
             CREATE_NO_WINDOW = 0x08000000
             si = subprocess.STARTUPINFO()
@@ -1881,7 +1881,6 @@ class MainWindow(QMainWindow):
         cmd = [path]
         if args:
             # Parse arguments safely for Windows compatibility
-            kwargs['shell'] = False
             try:
                 parts = shlex.split(args, posix=False)
                 cmd.extend(parts)
