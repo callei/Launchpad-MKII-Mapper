@@ -59,6 +59,24 @@ def test_hotkey_with_unknown_key_sends_nothing_for_that_chord(lpm):
     assert lpm._parse_hotkey("ctrl+bogus>f5") == ([[0x74]], ["bogus"])
 
 
+def test_dev_autostart_uses_pythonw(win, lpm, monkeypatch):
+    import contextlib
+    import types
+
+    written = {}
+    fake = types.SimpleNamespace(
+        HKEY_CURRENT_USER=0,
+        KEY_ALL_ACCESS=0,
+        REG_SZ=1,
+        OpenKey=lambda *a: contextlib.nullcontext("key"),
+        SetValueEx=lambda key, name, _r, _t, value: written.update({name: value}),
+    )
+    monkeypatch.setitem(sys.modules, "winreg", fake)
+    assert win._update_autostart_registry(True)
+    cmd = written["LaunchpadMapper"]
+    assert "pythonw.exe" in cmd.lower() and cmd.endswith("--autostart")
+
+
 def test_launch_app_does_not_retry_without_args(win, lpm, monkeypatch, tmp_path):
     exe = tmp_path / "a.exe"
     exe.write_bytes(b"")

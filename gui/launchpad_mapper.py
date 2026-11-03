@@ -1489,6 +1489,9 @@ class MainWindow(QMainWindow):
                     else:
                         # Start via python executable to ensure correct interpreter in dev mode
                         py = Path(sys.executable).resolve()
+                        # pythonw.exe: no console window at login
+                        if (py.parent / 'pythonw.exe').exists():
+                            py = py.parent / 'pythonw.exe'
                         script = Path(__file__).resolve()
                         cmd = f'"{py}" "{script}" --autostart'
                     winreg.SetValueEx(key, value_name, 0, winreg.REG_SZ, cmd)
