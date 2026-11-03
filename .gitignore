@@ -40,3 +40,6 @@ file_version_info.txt
 build_exe.ps1
 installer.iss
 config.yaml
+# Agent docs (local only)
+docs/
+AGENTS.md
