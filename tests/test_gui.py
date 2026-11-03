@@ -116,6 +116,21 @@ def test_startup_repairs_missing_active_layer(qapp, lpm, win):
         w2.deleteLater()
 
 
+def test_switch_layer_pad(win):
+    win.layers["drums"] = {"pads": {}}
+    win.layer_list.addItem("drums")
+    win.layers["main"]["pads"]["0,0"] = {"type": "switch layer", "layer": "drums"}
+    win.on_pad_press((0, 0))
+    assert win.active_layer == "drums"
+    assert win.layer_list.currentItem().text() == "drums"
+
+
+def test_switch_layer_pad_to_missing_layer_is_ignored(win):
+    win.layers["main"]["pads"]["0,0"] = {"type": "switch layer", "layer": "nope"}
+    win.on_pad_press((0, 0))
+    assert win.active_layer == "main"
+
+
 def test_app_picker_stops_scan_thread_on_close(win):
     import widgets
 

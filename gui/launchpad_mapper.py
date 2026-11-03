@@ -1801,6 +1801,14 @@ class MainWindow(QMainWindow):
                 self.active_layer = names[new_index]
                 # Triggers switch_layer (via currentTextChanged), which repaints
                 self.layer_list.setCurrentRow(new_index)
+        elif mapping and mapping.get("type") == "switch layer":
+            target = mapping.get("layer")
+            names = list(self.layers.keys())
+            if target in names:
+                # Triggers switch_layer (via currentTextChanged), which repaints
+                self.layer_list.setCurrentRow(names.index(target))
+            else:
+                self.statusBar().showMessage(f"Layer '{target}' not found", 4000)
         elif mapping and mapping.get("type") == "animation":
             anim_name = mapping.get("name")
             if anim_name and anim_name in self.animations:
