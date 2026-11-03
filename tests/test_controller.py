@@ -34,10 +34,7 @@ def test_mk2_known_notes():
     assert lp.pad_to_note((0, -1)) == 104  # first top round button
 
 
-@pytest.mark.parametrize(
-    "note",
-    [0, 10, 20, 90, 99, 103, pytest.param(112, marks=pytest.mark.xfail(strict=True, reason="tens digit wraps >= 110"))],
-)
+@pytest.mark.parametrize("note", [0, 10, 20, 90, 99, 103, 112, 118, 127])
 def test_mk2_unmapped_notes_return_none(note):
     assert LaunchpadController()._note_to_pad(note) is None
 

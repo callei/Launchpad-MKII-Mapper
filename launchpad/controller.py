@@ -134,7 +134,7 @@ class LaunchpadController:
             return (note - 104, -1)
         if self.mapping_mode == 'mk2':
             ones = note % 10
-            tens = (note // 10) % 10
+            tens = note // 10  # no % 10: notes >= 110 must not wrap onto grid rows
             # Side column ones=9 (notes 19,29,...,89)
             if 1 <= tens <= 8 and ones == 9:
                 y = 8 - tens
