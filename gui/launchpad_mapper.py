@@ -12,34 +12,25 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QLabel,
     QListWidget,
-    QListWidgetItem,
     QHBoxLayout,
     QFileDialog,
     QMessageBox,
     QDialog,
-    QComboBox,
-    QLineEdit,
-    QColorDialog,
-    QDialogButtonBox,
     QInputDialog,
     QTabWidget,
     QSpinBox,
-    QFileIconProvider,
-    QCheckBox,
 )
 from PySide6.QtCore import Qt, Signal, QPoint, QTimer, QThread
-from PySide6.QtGui import QPalette, QColor, QFont, QFontDatabase, QPainterPath, QRegion, QPainter, QPen
-from PySide6.QtWidgets import QProxyStyle, QStyle, QStyleFactory
+from PySide6.QtGui import QPalette, QColor, QFont, QFontDatabase, QPainter, QPen, QIcon, QAction
+from PySide6.QtWidgets import QProxyStyle, QStyle, QStyleFactory, QSystemTrayIcon, QMenu
 from PySide6.QtWidgets import QGraphicsDropShadowEffect
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from widgets import (
     PadButton,
-    FramelessPopup,
     ColorPickerPopup,
     SettingsPopup,
     TextInputPopup,
     PadEditorDialog,
-    AppPickerDialog,
 )
 import yaml
 import re
@@ -122,9 +113,6 @@ def _is_safe_path(base_dir: Path, user_path: Path) -> bool:
 
 
 # --------- Main Window Class ---------------------------------------------- #
-
-from PySide6.QtGui import QIcon, QAction
-from PySide6.QtWidgets import QSystemTrayIcon, QMenu
 
 
 class MainWindow(QMainWindow):
@@ -666,7 +654,7 @@ class MainWindow(QMainWindow):
         # Update any pad mappings referencing the old name
         for layer_data in self.layers.values():
             pads = layer_data.get("pads", {}) if isinstance(layer_data, dict) else {}
-            for pad_key, mapping in pads.items():
+            for mapping in pads.values():
                 if isinstance(mapping, dict) and mapping.get("type") == "animation" and mapping.get("name") == old:
                     mapping["name"] = new_name
         # Refresh list
@@ -1289,7 +1277,7 @@ class MainWindow(QMainWindow):
         changed = False
         for layer_data in self.layers.values():
             pads = layer_data.get("pads", {}) if isinstance(layer_data, dict) else {}
-            for pad_key, mapping in list(pads.items()):
+            for mapping in list(pads.values()):
                 if not isinstance(mapping, dict):
                     continue
                 t = mapping.get("type")
@@ -1963,7 +1951,7 @@ class MainWindow(QMainWindow):
             try:
                 subprocess.Popen([path], shell=False, **kwargs)
             except Exception:
-                raise e
+                raise e from None
 
     def update_grid(self):
         for pad, btn in self.pad_buttons.items():
@@ -2186,7 +2174,7 @@ def main():
                 try:
                     server.newConnection.connect(_on_new_conn)
                     # Keep reference on window to avoid GC
-                    setattr(win, '_single_server', server)
+                    win._single_server = server
                 except Exception:
                     pass
         except Exception:
@@ -2198,7 +2186,6 @@ def main():
     if preset_to_load:
         try:
             # Only load if file exists to avoid warning popups on silent background start
-            from pathlib import Path as _P
 
             preset_path = PRESETS_DIR / f"{preset_to_load}.yaml"
             if preset_path.exists():

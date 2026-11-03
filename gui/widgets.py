@@ -584,7 +584,7 @@ class AppPickerDialog(QDialog):
         cleaned = []
         allowed_sys = {"notepad.exe", "mspaint.exe", "calc.exe"}
         prog_dirs = [p.lower() for p in [os.environ.get('ProgramFiles'), os.environ.get('ProgramFiles(x86)')] if p]
-        for label, full, target, args, is_link in self._raw_entries:
+        for label, full, target, args, _is_link in self._raw_entries:
             eff = target or full
             if not eff:
                 continue
@@ -621,8 +621,8 @@ class AppPickerDialog(QDialog):
             self._all_items
             if not show_all
             else [
-                (l, (t or f) if (t or f) else f, (a or ""))
-                for (l, f, t, a, is_link) in self._raw_entries
+                (lbl, (t or f) if (t or f) else f, (a or ""))
+                for (lbl, f, t, a, _is_link) in self._raw_entries
                 if (t or f) and (t or f).lower().endswith('.exe')
             ]
         )
