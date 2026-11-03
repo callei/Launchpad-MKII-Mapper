@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
     QTabWidget,
     QSpinBox,
 )
-from PySide6.QtCore import Qt, Signal, QPoint, QTimer, QThread
+from PySide6.QtCore import Qt, Signal, Slot, QPoint, QTimer, QThread
 from PySide6.QtGui import QPalette, QColor, QFont, QFontDatabase, QPainter, QPen, QIcon, QAction
 from PySide6.QtWidgets import QProxyStyle, QStyle, QStyleFactory, QSystemTrayIcon, QMenu
 from PySide6.QtWidgets import QGraphicsDropShadowEffect
@@ -119,6 +119,9 @@ class MainWindow(QMainWindow):
     pad_pressed = Signal(int, int)  # x, y
     pad_released = Signal(int, int)
     start_animation_requested = Signal(str, int, bool)  # name, iterations, preview
+    # Emitted from the rtmidi thread; queued onto the GUI thread
+    _midi_pressed = Signal(int, int)
+    _midi_released = Signal(int, int)
 
     def sync_pad_lights(self):
         if not hasattr(self, 'lp') or self.lp is None:
@@ -212,6 +215,8 @@ class MainWindow(QMainWindow):
         self.pad_released.connect(self.animate_pad_release)
         # Ensure animations start on GUI thread
         self.start_animation_requested.connect(self._start_animation_from_signal)
+        self._midi_pressed.connect(self._on_midi_pressed)
+        self._midi_released.connect(self._on_midi_released)
         self.custom_font_family = None
         self.last_color = None  # Track last used color for dialogs
         self.load_custom_font()
@@ -1248,9 +1253,9 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "MIDI", f"Could not open Launchpad: {e}")
             self.lp = None
             return
-        # Register callbacks
-        self.lp.on_press = self.on_pad_press
-        self.lp.on_release = self.on_pad_release
+        # Callbacks run on the rtmidi thread: only emit signals there, handle on the GUI thread
+        self.lp.on_press = lambda pad: self._midi_pressed.emit(pad[0], pad[1])
+        self.lp.on_release = lambda pad: self._midi_released.emit(pad[0], pad[1])
         self.statusBar().showMessage(
             "Launchpad connected (virtual mode)" if self.lp.virtual else "Launchpad connected", 5000
         )
@@ -1846,6 +1851,14 @@ class MainWindow(QMainWindow):
 
     def on_pad_release(self, pad):
         self.pad_released.emit(pad[0], pad[1])
+
+    @Slot(int, int)
+    def _on_midi_pressed(self, x, y):
+        self.on_pad_press((x, y))
+
+    @Slot(int, int)
+    def _on_midi_released(self, x, y):
+        self.on_pad_release((x, y))
 
     def animate_pad_press(self, x, y):
         btn = self.pad_buttons.get((x, y))
