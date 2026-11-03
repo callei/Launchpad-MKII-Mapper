@@ -960,7 +960,8 @@ class MainWindow(QMainWindow):
                     else:
                         # finished
                         break
-                run['time_left'] += int(frames[run['index']].get('duration', 300))
+                # >= 1 ms: an all-zero-duration looping animation (possible via import) would spin here forever
+                run['time_left'] += max(1, int(frames[run['index']].get('duration', 300)))
             # Keep run if not finished
             if run['index'] < len(run['frames']) or (run['iterations'] is None):
                 remaining.append(run)

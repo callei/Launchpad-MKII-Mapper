@@ -84,6 +84,18 @@ def test_stopping_animations_does_not_leave_a_second_tick_chain(win, qapp, monke
     assert len(ticks) <= 200 // 30 + 2  # one chain: ~one tick per 30 ms frame
 
 
+def test_zero_duration_infinite_animation_does_not_hang(win, monkeypatch):
+    win.animations["imported"] = {"frames": [{"duration": 0, "pads": {"0,0": "#ff0000"}}]}
+    win._start_animation_playback("imported", 0)
+    monkeypatch.setattr(win, "_restart_anim_timer", lambda ms: None)  # tick runs off the GUI thread here
+    result = []
+    t = threading.Thread(target=lambda: result.append(win._anim_scheduler_tick()), daemon=True)
+    t.start()
+    t.join(2)
+    win._stop_animation_playback()
+    assert not t.is_alive(), "scheduler tick never returned"
+
+
 def test_app_picker_stops_scan_thread_on_close(win):
     import widgets
 
