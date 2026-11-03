@@ -709,9 +709,9 @@ class PadEditorDialog(FramelessPopup):
         self.launch_browse_btn.clicked.connect(self._browse_launch_app)
         self.launch_pick_btn.clicked.connect(self._pick_installed_app)
         # Hotkey edit
-        self.hotkey_label = QLabel("Hotkey (ex: ctrl+shift+esc eller sekvens: ctrl+alt+del>win+d):")
+        self.hotkey_label = QLabel("Hotkey (ex: ctrl+shift+esc eller sekvens: ctrl+c>win+d):")
         self.hotkey_edit = QLineEdit()
-        self.hotkey_edit.setPlaceholderText("ctrl+shift+esc  |  win+d  |  ctrl+alt+del>win+d")
+        self.hotkey_edit.setPlaceholderText("ctrl+shift+esc  |  win+d  |  ctrl+c>win+d")
         layout.addWidget(self.hotkey_label)
         layout.addWidget(self.hotkey_edit)
         # Media control select

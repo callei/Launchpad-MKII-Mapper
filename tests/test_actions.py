@@ -40,6 +40,25 @@ def test_launch_app_opens_non_executables_with_default_app(win, launched, tmp_pa
     assert launched == [("startfile", str(doc), {})]
 
 
+def test_hotkey_chords_and_sequences(lpm):
+    assert lpm._parse_hotkey("ctrl+shift+esc") == ([[0x11, 0x10, 0x1B]], [])
+    assert lpm._parse_hotkey("win+d > f5") == ([[0x5B, 0x44], [0x74]], [])
+    assert lpm._parse_hotkey("ctrl+enter") == ([[0x11, 0x0D]], [])
+    assert lpm._parse_hotkey("alt+tab, space") == ([[0x12, 0x09], [0x20]], [])
+    assert lpm._parse_hotkey("ctrl+comma") == ([[0x11, 0xBC]], [])
+    assert lpm._parse_hotkey("f13") == ([[0x7C]], [])
+
+
+def test_hotkey_punctuation_uses_layout_key_not_ascii(lpm):
+    (minus,), _ = lpm._parse_hotkey("-")
+    (period,), _ = lpm._parse_hotkey(".")
+    assert minus != [0x2D] and period != [0x2E]  # ord('-') is VK_INSERT, ord('.') is VK_DELETE
+
+
+def test_hotkey_with_unknown_key_sends_nothing_for_that_chord(lpm):
+    assert lpm._parse_hotkey("ctrl+bogus>f5") == ([[0x74]], ["bogus"])
+
+
 def test_launch_app_does_not_retry_without_args(win, lpm, monkeypatch, tmp_path):
     exe = tmp_path / "a.exe"
     exe.write_bytes(b"")

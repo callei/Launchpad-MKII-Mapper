@@ -2274,6 +2274,8 @@ if sys.platform == 'win32':
     import ctypes
 
     user32 = ctypes.WinDLL('user32', use_last_error=True)
+    user32.VkKeyScanW.argtypes = [ctypes.c_wchar]
+    user32.VkKeyScanW.restype = ctypes.c_short  # SHORT; -1 = no key for this char
     KEYEVENTF_KEYUP = 0x0002
     VK_MEDIA_NEXT_TRACK = 0xB0
     VK_MEDIA_PREV_TRACK = 0xB1
@@ -2282,6 +2284,9 @@ if sys.platform == 'win32':
     VK_VOLUME_DOWN = 0xAE
     VK_VOLUME_UP = 0xAF
 
+    KEYEVENTF_EXTENDEDKEY = 0x0001
+    VK_SHIFT = 0x10
+
     _SPECIAL_KEY_MAP = {
         'ctrl': 0x11,
         'control': 0x11,
@@ -2289,36 +2294,92 @@ if sys.platform == 'win32':
         'alt': 0x12,
         'win': 0x5B,
         'super': 0x5B,
+        'esc': 0x1B,
+        'escape': 0x1B,
+        'enter': 0x0D,
+        'return': 0x0D,
+        'tab': 0x09,
+        'space': 0x20,
+        'backspace': 0x08,
+        'delete': 0x2E,
+        'del': 0x2E,
+        'insert': 0x2D,
+        'ins': 0x2D,
+        'home': 0x24,
+        'end': 0x23,
+        'pageup': 0x21,
+        'pgup': 0x21,
+        'pagedown': 0x22,
+        'pgdn': 0x22,
+        'left': 0x25,
+        'up': 0x26,
+        'right': 0x27,
+        'down': 0x28,
+        'printscreen': 0x2C,
+        'prtsc': 0x2C,
+        'capslock': 0x14,
+        # '+' and ',' are syntax (chord / sequence separators), so they need names
+        'plus': 0xBB,
+        'comma': 0xBC,
     }
+    # Keys that must be sent with KEYEVENTF_EXTENDEDKEY (otherwise e.g. arrows act as numpad keys)
+    _EXTENDED_VKS = {0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x2C, 0x2D, 0x2E, 0x5B} | set(range(0xAD, 0xB4))
 
 
-def _vk_for_token(tok: str):
+def _vks_for_token(tok: str):
+    """Return the virtual-key codes for one token (a char may need shift), or None if unknown."""
     t = tok.lower().strip()
-    if sys.platform != 'win32':
+    if sys.platform != 'win32' or not t:
         return None
-    if not t:
-        return None
-    # Function keys F1-F12
+    # Function keys F1-F24
     if t.startswith('f') and t[1:].isdigit():
         num = int(t[1:])
-        if 1 <= num <= 12:
-            return 0x70 + (num - 1)  # VK_F1 = 0x70
-    if t == 'esc' or t == 'escape':
-        return 0x1B
+        if 1 <= num <= 24:
+            return [0x70 + (num - 1)]  # VK_F1 = 0x70
     if t in _SPECIAL_KEY_MAP:
-        return _SPECIAL_KEY_MAP[t]
+        return [_SPECIAL_KEY_MAP[t]]
     if len(t) == 1:
-        return ord(t.upper())
+        if t.isascii() and t.isalnum():
+            return [ord(t.upper())]  # VK codes for A-Z / 0-9 equal their ASCII codes
+        # Punctuation: ask the active keyboard layout (ord() gave unrelated keys, e.g. '-' -> Insert)
+        res = user32.VkKeyScanW(t)
+        if res == -1 or res & 0xFF == 0xFF:
+            return None
+        return ([VK_SHIFT] if (res >> 8) & 1 else []) + [res & 0xFF]
     return None
+
+
+def _parse_hotkey(combo: str):
+    """Parse 'ctrl+c>win+d' into chords of VK codes. Returns (chords, unknown_tokens).
+
+    A chord containing an unknown key is dropped entirely rather than pressed partially.
+    """
+    chords, unknown = [], []
+    for chord in re.split(r'[>,]', combo or ''):
+        parts = [p.strip() for p in chord.split('+') if p.strip()]
+        if not parts:
+            continue
+        vks, bad = [], [p for p in parts if _vks_for_token(p) is None]
+        if bad:
+            unknown.extend(bad)
+            continue
+        for part in parts:
+            for vk in _vks_for_token(part):
+                if vk not in vks:
+                    vks.append(vk)
+        chords.append(vks)
+    return chords, unknown
 
 
 def _send_vk_sequence(down_then_up):
     if sys.platform != 'win32':
         return
     for vk in down_then_up:
-        user32.keybd_event(vk, 0, 0, 0)
+        flags = KEYEVENTF_EXTENDEDKEY if vk in _EXTENDED_VKS else 0
+        user32.keybd_event(vk, 0, flags, 0)
     for vk in reversed(down_then_up):
-        user32.keybd_event(vk, 0, KEYEVENTF_KEYUP, 0)
+        flags = KEYEVENTF_EXTENDEDKEY if vk in _EXTENDED_VKS else 0
+        user32.keybd_event(vk, 0, flags | KEYEVENTF_KEYUP, 0)
 
 
 def MainWindow__perform_hotkey(self, combo: str):
@@ -2332,30 +2393,20 @@ def MainWindow__perform_hotkey(self, combo: str):
     Syntax examples:
       ctrl+shift+esc            (single chord)
       win+d                     (single chord)
-      ctrl+alt+del>win+d        (sequence of two chords executed in order)
+      ctrl+c>win+d              (sequence of two chords executed in order)
       f5                        (function key)
       shift+f2>alt+f4           (sequence with function keys)
 
     Chords are separated by '>' (or ','). Inside a chord, '+' joins simultaneous keys.
+    Use 'plus' / 'comma' for those keys. Ctrl+Alt+Del can't be sent by any program.
     """
-    if not combo:
-        return
-    # Normalize separators: allow '>' or ','.
-    seq_delims = re.split(r'[>,]', combo)
-    chords = [c.strip() for c in seq_delims if c.strip()]
-    if not chords:
-        return
-    for chord in chords:
-        parts = [p.strip() for p in chord.split('+') if p.strip()]
-        vk_list = []
-        for part in parts:
-            vk = _vk_for_token(part)
-            if vk is not None:
-                vk_list.append(vk)
-        if vk_list:
-            _send_vk_sequence(vk_list)
-            # Small delay between chords to mimic natural sequence timing
-            QThread.msleep(55)
+    chords, unknown = _parse_hotkey(combo)
+    if unknown:
+        self.statusBar().showMessage(f"Hotkey: unknown key(s) {', '.join(unknown)}", 5000)
+    for vk_list in chords:
+        _send_vk_sequence(vk_list)
+        # Small delay between chords to mimic natural sequence timing
+        QThread.msleep(55)
 
 
 def MainWindow__perform_media_control(self, action: str, steps: int = 1):
