@@ -163,6 +163,42 @@ def test_auto_connect_reports_virtual_mode_in_status_bar_only(win, lpm, monkeypa
     assert "port busy" in win.statusBar().currentMessage()
 
 
+def test_import_config_loads_animations_normalizes_and_saves(win, lpm, monkeypatch, tmp_path):
+    import yaml
+    from PySide6.QtWidgets import QFileDialog
+
+    src = tmp_path / "cfg.yaml"
+    src.write_text(
+        yaml.dump(
+            {
+                "active_layer": "main",
+                "layers": {"main": {"pads": {"0,0": {"type": "run_process", "command": "x"}}}},
+                "animations": {"wave": {"frames": []}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", staticmethod(lambda *a, **k: (str(src), "")))
+    dirty = []
+    monkeypatch.setattr(win, "mark_dirty", lambda: dirty.append(1))
+    win.import_config()
+    assert "wave" in win.animations
+    assert win.get_pad_mapping((0, 0))["type"] == "run process"
+    assert dirty
+
+
+def test_add_and_delete_layer_trigger_autosave(win, monkeypatch):
+    from PySide6.QtWidgets import QInputDialog
+
+    dirty = []
+    monkeypatch.setattr(win, "mark_dirty", lambda: dirty.append(1))
+    monkeypatch.setattr(QInputDialog, "getText", staticmethod(lambda *a, **k: ("extra", True)))
+    win.add_layer_dialog()
+    assert dirty == [1]
+    win.delete_current_layer()  # QMessageBox.question is patched to Yes
+    assert "extra" not in win.layers and dirty == [1, 1]
+
+
 def test_app_picker_stops_scan_thread_on_close(win):
     import widgets
 

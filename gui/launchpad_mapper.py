@@ -335,10 +335,13 @@ class MainWindow(QMainWindow):
                     self.config = yaml.safe_load(f) or {}
             self.active_layer = self.config.get("active_layer", "main")
             self.layers = self.config.get("layers", {})
+            self.animations = self.config.get("animations", {}) or {}
             self.layer_list.clear()
             self.layer_list.addItems(list(self.layers.keys()))
             self._select_active_layer_row()
+            self._normalize_all_mappings()
             self.update_grid()
+            self.mark_dirty()
 
     def show_help(self):
         help_text = (
@@ -1161,9 +1164,9 @@ class MainWindow(QMainWindow):
         }
         self.layer_list.addItem(layer_name)
         row = self.layer_list.count() - 1
+        # Triggers switch_layer (via currentTextChanged), which sets active_layer and repaints
         self.layer_list.setCurrentRow(row)
-        self.active_layer = layer_name
-        self.update_grid()
+        self.mark_dirty()
 
     def delete_current_layer(self):
         current = self.active_layer
@@ -1189,8 +1192,9 @@ class MainWindow(QMainWindow):
         # Select row
         names = list(self.layers.keys())
         idx = names.index(self.active_layer)
+        # Triggers switch_layer (via currentTextChanged), which repaints
         self.layer_list.setCurrentRow(idx)
-        self.update_grid()
+        self.mark_dirty()
 
     def load_custom_font(self):
         """Attempt to load Cascadia Code font from several possible locations.
