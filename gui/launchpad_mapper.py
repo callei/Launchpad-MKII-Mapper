@@ -1755,6 +1755,8 @@ class MainWindow(QMainWindow):
         self.layers[self.active_layer]["pads"] = {**pads}
         self.layers[self.active_layer]["pads"].setdefault("2,-1", nav_prev)
         self.layers[self.active_layer]["pads"].setdefault("3,-1", nav_next)
+        # Presets may hold legacy type names (e.g. shipped empty.yaml uses 'layer_nav')
+        self._normalize_all_mappings()
         self.current_preset_name = name
         # Persist last_preset in config ui section for auto-load on next start
         try:
