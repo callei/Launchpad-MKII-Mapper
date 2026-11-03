@@ -3,6 +3,7 @@ from typing import Optional, Callable, Tuple, Iterable
 
 PadCoord = Tuple[int, int]  # (x, y) 0-7 for grid (y=0 is top row)
 
+
 class LaunchpadController:
     """Low level MIDI IO wrapper for Launchpad MKII.
 
@@ -12,7 +13,14 @@ class LaunchpadController:
     - Send LED color updates (single + batch)
     """
 
-    def __init__(self, input_name_substr: str = "Launchpad", output_name_substr: str = "Launchpad", allow_virtual: bool = True, mapping_mode: str = "mk2", rgb_highlight: bool = True):
+    def __init__(
+        self,
+        input_name_substr: str = "Launchpad",
+        output_name_substr: str = "Launchpad",
+        allow_virtual: bool = True,
+        mapping_mode: str = "mk2",
+        rgb_highlight: bool = True,
+    ):
         self.input_name_substr = input_name_substr
         self.output_name_substr = output_name_substr
         self.inport: Optional[mido.ports.BaseInput] = None
@@ -74,6 +82,7 @@ class LaunchpadController:
                 print(f"[controller] MIDI open failed: {e}. Entering virtual mode. Incoming pad presses won't arrive.")
                 return
             raise
+
     # We avoid forcing programmer mode now to prevent unintended pad colors.
 
     def close(self) -> None:
@@ -173,14 +182,14 @@ class LaunchpadController:
         r, g, b = rgb
         if self.mapping_mode == 'mk2' and self.rgb_highlight:
             # Apply calibration & clamp 0..63
-            sr = max(0, min(63, int((r/255) * 63 * self.calibration['r'])))
-            sg = max(0, min(63, int((g/255) * 63 * self.calibration['g'])))
-            sb = max(0, min(63, int((b/255) * 63 * self.calibration['b'])))
+            sr = max(0, min(63, int((r / 255) * 63 * self.calibration['r'])))
+            sg = max(0, min(63, int((g / 255) * 63 * self.calibration['g'])))
+            sb = max(0, min(63, int((b / 255) * 63 * self.calibration['b'])))
             # Single LED RGB
-            self._safe_send(mido.Message('sysex', data=[0x00,0x20,0x29,0x02,0x18,0x0B,note,sr,sg,sb]))
+            self._safe_send(mido.Message('sysex', data=[0x00, 0x20, 0x29, 0x02, 0x18, 0x0B, note, sr, sg, sb]))
         else:
             # Monochrome fallback (linear grid devices)
-            velocity = max(1, min(127, int((0.3*r + 0.59*g + 0.11*b)/255 * 127)))
+            velocity = max(1, min(127, int((0.3 * r + 0.59 * g + 0.11 * b) / 255 * 127)))
             self._safe_send(mido.Message('note_on', note=note, velocity=velocity))
 
     def set_calibration(self, r: float, g: float, b: float):
@@ -202,14 +211,14 @@ class LaunchpadController:
             # Attempt Mk2 all LEDs off (session lighting off) – sending reset to default state
             try:
                 # Clear using Fader/LED All Off (0x0E) if supported; else fallback
-                self._safe_send(mido.Message('sysex', data=[0x00,0x20,0x29,0x02,0x18,0x0E,0x00]))
+                self._safe_send(mido.Message('sysex', data=[0x00, 0x20, 0x29, 0x02, 0x18, 0x0E, 0x00]))
                 return
             except Exception:
                 pass
         for note in range(64):
             self._safe_send(mido.Message('note_on', note=note, velocity=0))
 
-    def highlight_pads(self, pads: Iterable[PadCoord], rgb=(0,64,255)):
+    def highlight_pads(self, pads: Iterable[PadCoord], rgb=(0, 64, 255)):
         """Light only provided pads with provided RGB (default blue)."""
         items = list(pads)
         if not items:

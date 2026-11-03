@@ -2,15 +2,30 @@ import sys
 import os
 from pathlib import Path
 from PySide6.QtWidgets import (
-    QWidget, QPushButton, QVBoxLayout, QLabel, QListWidget, QListWidgetItem, QHBoxLayout, 
-    QFileDialog, QDialog, QComboBox, QLineEdit, QColorDialog, QDialogButtonBox, 
-    QInputDialog, QSpinBox, QCheckBox
+    QWidget,
+    QPushButton,
+    QVBoxLayout,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QHBoxLayout,
+    QFileDialog,
+    QDialog,
+    QComboBox,
+    QLineEdit,
+    QColorDialog,
+    QDialogButtonBox,
+    QInputDialog,
+    QSpinBox,
+    QCheckBox,
 )
 from PySide6.QtCore import Qt, Signal, QPoint, QTimer, QThread
 from PySide6.QtGui import QColor, QPainterPath, QRegion
 
+
 class PadButton(QPushButton):
     """GUI representation of a Launchpad pad (matrix or control)."""
+
     def __init__(self, x, y, label="", color=None, control=False):
         super().__init__(label)
         self.x = x
@@ -34,12 +49,12 @@ class PadButton(QPushButton):
         bg = self._base_color if self._base_color else 'transparent'
         border_w = 3 if self._pressed else 1
         radius = 15 if self.control else 4
-        self.setStyleSheet(
-            f"background-color: {bg}; border: {border_w}px solid #555; border-radius:{radius}px;"
-        )
+        self.setStyleSheet(f"background-color: {bg}; border: {border_w}px solid #555; border-radius:{radius}px;")
+
 
 class FramelessPopup(QDialog):
     """Reusable frameless popup with a custom title bar matching the main window style."""
+
     def __init__(self, title: str = "", parent=None, allow_minimize: bool = False):
         super().__init__(parent)
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Dialog)
@@ -73,11 +88,13 @@ class FramelessPopup(QDialog):
             tb_layout.addWidget(min_btn)
         close_btn = QPushButton("✕")
         close_btn.setFixedWidth(26)
-        close_btn.setStyleSheet(btn_style + "QPushButton { color:#e66; } QPushButton:hover { background:#a33; color:#fff; }")
+        close_btn.setStyleSheet(
+            btn_style + "QPushButton { color:#e66; } QPushButton:hover { background:#a33; color:#fff; }"
+        )
         close_btn.clicked.connect(self.reject)
         tb_layout.addWidget(close_btn)
         self._title_bar.mousePressEvent = self._title_mouse_press  # type: ignore
-        self._title_bar.mouseMoveEvent = self._title_mouse_move    # type: ignore
+        self._title_bar.mouseMoveEvent = self._title_mouse_move  # type: ignore
         self._title_bar.mouseReleaseEvent = self._title_mouse_release  # type: ignore
         # Content wrapper to give rounded corners below title bar
         self._content_frame = QWidget()
@@ -127,7 +144,10 @@ class ColorPickerPopup(FramelessPopup):
     Now also includes an intensity selector (low/medium/high) so intensity travels with color
     selections across both mapping and animation editors.
     """
-    def __init__(self, initial_color: str | None, original_color: str | None, parent=None, initial_intensity: str | None = None):
+
+    def __init__(
+        self, initial_color: str | None, original_color: str | None, parent=None, initial_intensity: str | None = None
+    ):
         super().__init__(title="Pick Color", parent=parent)
         self._selected: str | None = initial_color
         self._original = original_color
@@ -150,7 +170,7 @@ class ColorPickerPopup(FramelessPopup):
         self.intensity_select = QComboBox()
         self.intensity_select.addItems(["low", "medium", "high"])
         try:
-            idx = ["low","medium","high"].index(self._intensity)
+            idx = ["low", "medium", "high"].index(self._intensity)
         except ValueError:
             idx = 1
         self.intensity_select.setCurrentIndex(idx)
@@ -185,12 +205,14 @@ class ColorPickerPopup(FramelessPopup):
     def _hide_internal_dialog_buttons(self):
         """Hides built-in OK/Cancel in QColorDialog so only our own are visible."""
         from PySide6.QtWidgets import QDialogButtonBox
+
         box = self._dlg.findChild(QDialogButtonBox)
         if box:
             box.hide()
 
     def _strip_mnemonics(self):
         from PySide6.QtWidgets import QLabel, QPushButton
+
         widgets = self._dlg.findChildren(QLabel) + self._dlg.findChildren(QPushButton)
         for w in widgets:
             txt = w.text()
@@ -206,6 +228,7 @@ class ColorPickerPopup(FramelessPopup):
 
     def _relocate_dialog_buttons(self):
         from PySide6.QtWidgets import QDialogButtonBox
+
         box = self._dlg.findChild(QDialogButtonBox)
         if not box:
             return
@@ -230,7 +253,7 @@ class ColorPickerPopup(FramelessPopup):
             return
         slot, ok = QInputDialog.getInt(self, "Custom Color Slot", "Slot (1-16):", 1, 1, 16, 1)
         if ok:
-            QColorDialog.setCustomColor(slot-1, col)
+            QColorDialog.setCustomColor(slot - 1, col)
 
     def _accept(self):
         col = self._dlg.currentColor()
@@ -241,12 +264,14 @@ class ColorPickerPopup(FramelessPopup):
 
     def get_selected_color(self) -> str | None:
         return self._selected
+
     def get_selected_intensity(self) -> str:
         return (self._intensity or "medium").lower()
 
 
 class SettingsPopup(FramelessPopup):
     """Settings dialog for startup behavior and tray options."""
+
     def __init__(self, ui_cfg: dict, is_frozen: bool, parent=None):
         super().__init__(title="Settings", parent=parent)
         self.set_popup_title("Settings")
@@ -256,8 +281,10 @@ class SettingsPopup(FramelessPopup):
         lay.addWidget(QLabel("When starting the app (applies to autostart only):"))
         self.start_mode = QComboBox()
         self.start_mode.addItems(["normal", "minimized", "hidden"])  # hidden = tray only
-        current_mode = (self._ui_cfg.get("start_mode") or ("hidden" if self._ui_cfg.get("start_hidden") else "normal")).lower()
-        if current_mode not in ("normal","minimized","hidden"):
+        current_mode = (
+            self._ui_cfg.get("start_mode") or ("hidden" if self._ui_cfg.get("start_hidden") else "normal")
+        ).lower()
+        if current_mode not in ("normal", "minimized", "hidden"):
             current_mode = "normal"
         self.start_mode.setCurrentText(current_mode)
         lay.addWidget(self.start_mode)
@@ -291,6 +318,7 @@ class SettingsPopup(FramelessPopup):
 
 class TextInputPopup(FramelessPopup):
     """Frameless styled text input box (replaces QInputDialog.getText)."""
+
     def __init__(self, title: str, label: str, default: str = "", parent=None, placeholder: str | None = None):
         super().__init__(title=title, parent=parent)
         lay = self.content_layout()
@@ -322,20 +350,24 @@ class TextInputPopup(FramelessPopup):
             return self._edit.text(), True
         return "", False
 
+
 class _AppScanWorker(QThread):
     resultReady = Signal(list)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._stop = False
+
     def stop(self):
         self._stop = True
+
     def run(self):
         try:
             if sys.platform != 'win32':
                 self.resultReady.emit([])
                 return
             exts = {'.lnk', '.exe'}
-            entries: list[tuple[str,str,str|None,str,bool]] = []  # (label, fullPath, targetPath, args, is_link)
+            entries: list[tuple[str, str, str | None, str, bool]] = []  # (label, fullPath, targetPath, args, is_link)
             seen_effective = set()
 
             def add_entry(label: str, full: str, target: str | None, args: str, is_link: bool):
@@ -355,17 +387,18 @@ class _AppScanWorker(QThread):
             dirs = []
             pd = os.environ.get('PROGRAMDATA')
             if pd:
-                d = Path(pd)/'Microsoft/Windows/Start Menu/Programs'
+                d = Path(pd) / 'Microsoft/Windows/Start Menu/Programs'
                 if d.exists():
                     dirs.append(d)
             ra = os.environ.get('APPDATA')
             if ra:
-                d = Path(ra)/'Microsoft/Windows/Start Menu/Programs'
+                d = Path(ra) / 'Microsoft/Windows/Start Menu/Programs'
                 if d.exists():
                     dirs.append(d)
             # Optional .lnk resolution
             try:
                 import win32com.client  # type: ignore
+
                 shell = win32com.client.Dispatch('WScript.Shell')
             except Exception:
                 shell = None
@@ -380,7 +413,7 @@ class _AppScanWorker(QThread):
                         continue
                     full = str(path)
                     target = None
-                    is_link = (suf == '.lnk')
+                    is_link = suf == '.lnk'
                     if is_link and shell:
                         try:
                             sc = shell.CreateShortcut(full)
@@ -394,6 +427,7 @@ class _AppScanWorker(QThread):
 
             # --- 2. Registry Uninstall (Control Panel list) ---
             import winreg
+
             uninstall_roots = [
                 (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
                 (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
@@ -444,10 +478,13 @@ class _AppScanWorker(QThread):
                                             pick = None
                                             for p in candidates:
                                                 if base_try and base_try in p.stem.lower().replace(' ', ''):
-                                                    pick = p; break
+                                                    pick = p
+                                                    break
                                             if not pick and candidates:
                                                 # Take largest exe as fallback
-                                                pick = max(candidates, key=lambda p: p.stat().st_size if p.exists() else 0)
+                                                pick = max(
+                                                    candidates, key=lambda p: p.stat().st_size if p.exists() else 0
+                                                )
                                             if pick:
                                                 t = str(pick)
                                             else:
@@ -500,10 +537,12 @@ class _AppScanWorker(QThread):
         except Exception:
             self.resultReady.emit([])
 
+
 class AppPickerDialog(QDialog):
     """List installed programs (cleaned) with Start menu as source.
     Shows only executable .exe (direct or via .lnk) and filters out obvious tools/uninstall shortcuts.
     """
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Choose Installed Application")
@@ -528,7 +567,7 @@ class AppPickerDialog(QDialog):
         self.show_all_cb.toggled.connect(self._refilter)
         self.list.itemDoubleClicked.connect(lambda *_: self.accept())
         self._raw_entries = []  # list of tuples: (label, full, target, args, is_link)
-        self._all_items: list[tuple[str,str,str]] = []  # (label, effective_path, args)
+        self._all_items: list[tuple[str, str, str]] = []  # (label, effective_path, args)
         self._worker = _AppScanWorker(self)
         self._worker.resultReady.connect(self._on_scan_done)
         self._worker.start()
@@ -546,7 +585,7 @@ class AppPickerDialog(QDialog):
         allowed_sys = {"notepad.exe", "mspaint.exe", "calc.exe"}
         prog_dirs = [p.lower() for p in [os.environ.get('ProgramFiles'), os.environ.get('ProgramFiles(x86)')] if p]
         for label, full, target, args, is_link in self._raw_entries:
-            eff = (target or full)
+            eff = target or full
             if not eff:
                 continue
             if not (eff.lower().endswith('.exe') or eff.lower().endswith('.lnk')):
@@ -578,10 +617,15 @@ class AppPickerDialog(QDialog):
     def _refilter(self):
         text = self.filter_edit.text().strip().lower()
         show_all = self.show_all_cb.isChecked()
-        items = self._all_items if not show_all else [
-            (l, (t or f) if (t or f) else f, (a or "")) for (l, f, t, a, is_link) in self._raw_entries
-            if (t or f) and (t or f).lower().endswith('.exe')
-        ]
+        items = (
+            self._all_items
+            if not show_all
+            else [
+                (l, (t or f) if (t or f) else f, (a or ""))
+                for (l, f, t, a, is_link) in self._raw_entries
+                if (t or f) and (t or f).lower().endswith('.exe')
+            ]
+        )
         if text:
             items = [p for p in items if text in p[0].lower() or text in os.path.basename(p[1]).lower()]
         self._rebuild_list(items)
@@ -600,6 +644,7 @@ class AppPickerDialog(QDialog):
             return None
         return it.data(Qt.UserRole)
 
+
 class PadEditorDialog(FramelessPopup):
     def __init__(self, pad, mapping, parent=None, animation_names=None):
         super().__init__(title=f"Edit Pad ({pad[0]},{pad[1]})", parent=parent)
@@ -610,17 +655,19 @@ class PadEditorDialog(FramelessPopup):
         # Action type
         self.action_type = QComboBox()
         # Display names are space-based; underlying stored mapping types are also space-based (legacy underscore forms normalized on load)
-        self.action_type.addItems([
-            "none",
-            "color only",
-            "run process",
-            "launch app",
-            "hotkey",
-            "media control",
-            "switch layer",
-            "layer nav",
-            "animation"
-        ])
+        self.action_type.addItems(
+            [
+                "none",
+                "color only",
+                "run process",
+                "launch app",
+                "hotkey",
+                "media control",
+                "switch layer",
+                "layer nav",
+                "animation",
+            ]
+        )
         layout.addWidget(QLabel("Action Type:"))
         layout.addWidget(self.action_type)
         # Value (command / process)
@@ -640,13 +687,15 @@ class PadEditorDialog(FramelessPopup):
         launch_row.addWidget(self.launch_browse_btn)
         launch_row.addWidget(self.launch_pick_btn)
         layout.addWidget(self.launch_label)
-        lrw = QWidget(); lrw.setLayout(launch_row)
+        lrw = QWidget()
+        lrw.setLayout(launch_row)
         layout.addWidget(lrw)
         # Arguments and elevation
         args_row = QHBoxLayout()
         args_row.addWidget(self.launch_args_label)
         args_row.addWidget(self.launch_args, 1)
-        args_row_w = QWidget(); args_row_w.setLayout(args_row)
+        args_row_w = QWidget()
+        args_row_w.setLayout(args_row)
         layout.addWidget(args_row_w)
         self.launch_browse_btn.clicked.connect(self._browse_launch_app)
         self.launch_pick_btn.clicked.connect(self._pick_installed_app)
@@ -699,7 +748,8 @@ class PadEditorDialog(FramelessPopup):
         inten_row = QHBoxLayout()
         inten_row.addWidget(self.intensity_label)
         inten_row.addWidget(self.intensity_select)
-        inten_w = QWidget(); inten_w.setLayout(inten_row)
+        inten_w = QWidget()
+        inten_w.setLayout(inten_row)
         inten_w.setVisible(False)
         self.intensity_label.setVisible(False)
         self.intensity_select.setVisible(False)
@@ -763,7 +813,7 @@ class PadEditorDialog(FramelessPopup):
             self.selected_color = mapping.get("color", None)
             # Intensity default medium
             inten = str(mapping.get("intensity", "medium")).lower()
-            if inten not in ("low","medium","high"):
+            if inten not in ("low", "medium", "high"):
                 # numeric legacy 1..3 guarded parsing
                 raw_int = mapping.get("intensity")
                 n: int | None = None
@@ -774,7 +824,7 @@ class PadEditorDialog(FramelessPopup):
                         n = int(raw_int)
                     except Exception:
                         n = None
-                inten = {1:"low",2:"medium",3:"high"}.get(n, "medium") if n in (1,2,3) else "medium"
+                inten = {1: "low", 2: "medium", 3: "high"}.get(n, "medium") if n in (1, 2, 3) else "medium"
             self.intensity_select.setCurrentText(inten)
             if mtype in ("layer nav", "layer_nav"):
                 self.nav_label.setVisible(True)
@@ -804,17 +854,17 @@ class PadEditorDialog(FramelessPopup):
         # Normalize text just in case (legacy underscores)
         legacy_map = {"layer_nav": "layer nav", "switch_layer": "switch layer", "run_process": "run process"}
         text_norm = legacy_map.get(text, text)
-        is_anim = (text_norm == "animation")
+        is_anim = text_norm == "animation"
         self.animation_label.setVisible(is_anim)
         self.animation_select.setVisible(is_anim)
         self.animation_loop_container.setVisible(is_anim)
-        is_nav = (text_norm == "layer nav")
+        is_nav = text_norm == "layer nav"
         self.nav_label.setVisible(is_nav)
         self.nav_select.setVisible(is_nav)
-        is_run = (text_norm == "run process")
+        is_run = text_norm == "run process"
         self.value_label.setVisible(is_run)
         self.action_value.setVisible(is_run)
-        is_launch = (text_norm == "launch app")
+        is_launch = text_norm == "launch app"
         self.launch_label.setVisible(is_launch)
         self.launch_path.setVisible(is_launch)
         # The container widget lrw
@@ -822,13 +872,13 @@ class PadEditorDialog(FramelessPopup):
             self.launch_path.parentWidget().setVisible(is_launch)
         except Exception:
             pass
-        is_hotkey = (text_norm == "hotkey")
+        is_hotkey = text_norm == "hotkey"
         self.hotkey_label.setVisible(is_hotkey)
         self.hotkey_edit.setVisible(is_hotkey)
-        is_media = (text_norm == "media control")
+        is_media = text_norm == "media control"
         self.media_label.setVisible(is_media)
         self.media_select.setVisible(is_media)
-        is_switch = (text_norm == "switch layer")
+        is_switch = text_norm == "switch layer"
         self.layer_label.setVisible(is_switch)
         self.layer_select.setVisible(is_switch)
         # launch args
@@ -856,12 +906,17 @@ class PadEditorDialog(FramelessPopup):
             init_inten = (self.intensity_select.currentText() or "medium").lower()
         except Exception:
             init_inten = "medium"
-        picker = ColorPickerPopup(initial_color=self.selected_color, original_color=self.selected_color, parent=self, initial_intensity=init_inten)
+        picker = ColorPickerPopup(
+            initial_color=self.selected_color,
+            original_color=self.selected_color,
+            parent=self,
+            initial_intensity=init_inten,
+        )
         if picker.exec() == QDialog.Accepted:
             self.selected_color = picker.get_selected_color()
             try:
                 inten = picker.get_selected_intensity()
-                if inten in ("low","medium","high"):
+                if inten in ("low", "medium", "high"):
                     self.intensity_select.setCurrentText(inten)
             except Exception:
                 pass
@@ -870,6 +925,7 @@ class PadEditorDialog(FramelessPopup):
         path, _ = QFileDialog.getOpenFileName(self, "Select Application", str(Path.home()))
         if path:
             self.launch_path.setText(path)
+
     def _pick_installed_app(self):
         dlg = AppPickerDialog(self)
         if dlg.exec() == QDialog.Accepted:

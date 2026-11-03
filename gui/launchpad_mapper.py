@@ -4,17 +4,43 @@ import os
 import shlex
 from pathlib import Path
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QGridLayout, QPushButton, QVBoxLayout,
-    QLabel, QListWidget, QListWidgetItem, QHBoxLayout, QFileDialog, QMessageBox, QDialog, QComboBox,
-    QLineEdit, QColorDialog, QDialogButtonBox, QInputDialog, QTabWidget, QSpinBox, QFileIconProvider,
-    QCheckBox
+    QApplication,
+    QMainWindow,
+    QWidget,
+    QGridLayout,
+    QPushButton,
+    QVBoxLayout,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QHBoxLayout,
+    QFileDialog,
+    QMessageBox,
+    QDialog,
+    QComboBox,
+    QLineEdit,
+    QColorDialog,
+    QDialogButtonBox,
+    QInputDialog,
+    QTabWidget,
+    QSpinBox,
+    QFileIconProvider,
+    QCheckBox,
 )
 from PySide6.QtCore import Qt, Signal, QPoint, QTimer, QThread
 from PySide6.QtGui import QPalette, QColor, QFont, QFontDatabase, QPainterPath, QRegion, QPainter, QPen
 from PySide6.QtWidgets import QProxyStyle, QStyle, QStyleFactory
 from PySide6.QtWidgets import QGraphicsDropShadowEffect
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
-from widgets import PadButton, FramelessPopup, ColorPickerPopup, SettingsPopup, TextInputPopup, PadEditorDialog, AppPickerDialog
+from widgets import (
+    PadButton,
+    FramelessPopup,
+    ColorPickerPopup,
+    SettingsPopup,
+    TextInputPopup,
+    PadEditorDialog,
+    AppPickerDialog,
+)
 import yaml
 import re
 import traceback
@@ -34,6 +60,8 @@ if '--debug' in sys.argv:
 
 _LOG_PATH = None
 _GLOBAL_WIN = None  # Set to MainWindow instance for global cleanup
+
+
 def _debug_log(msg: str):
     # Write a line to the debug log if debug mode is active.
     global _LOG_PATH
@@ -51,6 +79,7 @@ def _debug_log(msg: str):
             f.write(msg.rstrip() + '\n')
     except Exception:
         pass
+
 
 # Launchpad Mapper GUI.
 """
@@ -75,9 +104,10 @@ APPDATA_DIR.mkdir(parents=True, exist_ok=True)
 CONFIG_PATH = APPDATA_DIR / "config.yaml"
 PRESETS_DIR = APPDATA_DIR / "presets"
 
+
 # Security helper functions
 def _is_safe_path(base_dir: Path, user_path: Path) -> bool:
-    #Validate that user_path is within base_dir to prevent path traversal attacks.
+    # Validate that user_path is within base_dir to prevent path traversal attacks.
     try:
         # Resolve both paths to absolute, canonical paths
         base = base_dir.resolve()
@@ -90,15 +120,18 @@ def _is_safe_path(base_dir: Path, user_path: Path) -> bool:
         # ValueError raised if target is not relative to base
         return False
 
+
 # --------- Main Window Class ---------------------------------------------- #
 
 from PySide6.QtGui import QIcon, QAction
 from PySide6.QtWidgets import QSystemTrayIcon, QMenu
 
+
 class MainWindow(QMainWindow):
-    pad_pressed = Signal(int, int)   # x, y
+    pad_pressed = Signal(int, int)  # x, y
     pad_released = Signal(int, int)
     start_animation_requested = Signal(str, int, bool)  # name, iterations, preview
+
     def sync_pad_lights(self):
         if not hasattr(self, 'lp') or self.lp is None:
             return
@@ -111,14 +144,15 @@ class MainWindow(QMainWindow):
             # Explicitly clear top row & side column
             for x in range(8):
                 try:
-                    self.lp.set_pad_color((x, -1), (0,0,0))
+                    self.lp.set_pad_color((x, -1), (0, 0, 0))
                 except Exception:
                     pass
             for y in range(8):
                 try:
-                    self.lp.set_pad_color((8, y), (0,0,0))
+                    self.lp.set_pad_color((8, y), (0, 0, 0))
                 except Exception:
                     pass
+
         # Apply base mapping to all pads, but don't overwrite pads currently set by animations
         def _set_base(pad_xy, rgb):
             if pad_xy in composite:
@@ -127,6 +161,7 @@ class MainWindow(QMainWindow):
                 self.lp.set_pad_color(pad_xy, rgb)
             except Exception:
                 pass
+
         # Top row and side column
         for x in range(8):
             _set_base((x, -1), self._get_base_color((x, -1)))
@@ -136,7 +171,8 @@ class MainWindow(QMainWindow):
         for y in range(8):
             for x in range(8):
                 _set_base((x, y), self._get_base_color((x, y)))
-    def __init__(self, start_hidden: bool=False):
+
+    def __init__(self, start_hidden: bool = False):
         super().__init__()
         self.theme_name = "Minimalistic Black"
         # Frameless window for a slick look
@@ -147,10 +183,18 @@ class MainWindow(QMainWindow):
         self._drag_pos: QPoint | None = None
         # Start with an empty layout (user can load preset/config)
         # Include default layer navigation buttons (top: x=2 back, x=3 forward)
-        self.config = {"active_layer": "main", "layers": {"main": {"pads": {
-            "2,-1": {"type": "layer nav", "nav": "prev", "color": "#2980b9"},
-            "3,-1": {"type": "layer nav", "nav": "next", "color": "#8e44ad"}
-        }}}, "animations": {}}
+        self.config = {
+            "active_layer": "main",
+            "layers": {
+                "main": {
+                    "pads": {
+                        "2,-1": {"type": "layer nav", "nav": "prev", "color": "#2980b9"},
+                        "3,-1": {"type": "layer nav", "nav": "next", "color": "#8e44ad"},
+                    }
+                }
+            },
+            "animations": {},
+        }
         self.active_layer = "main"
         self.layers = self.config["layers"]
         self.animations = self.config.get("animations", {})  # name -> {frames:[{duration:int, pads:{"x,y":"#rrggbb"}}]}
@@ -242,14 +286,16 @@ class MainWindow(QMainWindow):
         min_btn.clicked.connect(self.showMinimized)
         close_btn = QPushButton("✕")
         close_btn.setFixedWidth(28)
-        close_btn.setStyleSheet(btn_style + "QPushButton { color:#e66; } QPushButton:hover { background:#a33; color:#fff; }")
+        close_btn.setStyleSheet(
+            btn_style + "QPushButton { color:#e66; } QPushButton:hover { background:#a33; color:#fff; }"
+        )
         close_btn.clicked.connect(self.close)
         layout.addWidget(min_btn)
         layout.addWidget(close_btn)
         bar.setLayout(layout)
         # Enable dragging by installing mouse events
         bar.mousePressEvent = self._title_mouse_press  # type: ignore
-        bar.mouseMoveEvent = self._title_mouse_move    # type: ignore
+        bar.mouseMoveEvent = self._title_mouse_move  # type: ignore
         bar.mouseReleaseEvent = self._title_mouse_release  # type: ignore
         return bar
 
@@ -266,6 +312,7 @@ class MainWindow(QMainWindow):
     def _title_mouse_release(self, event):
         self._drag_pos = None
         event.accept()
+
     def get_pad_mapping(self, pad):
         layer = self.layers.get(self.active_layer, {})
         pads = layer.get("pads", {})
@@ -279,10 +326,13 @@ class MainWindow(QMainWindow):
         return True
 
     def export_config(self):
-        fname, _ = QFileDialog.getSaveFileName(self, "Export Config", str(CONFIG_PATH), "YAML Files (*.yaml);;JSON Files (*.json)")
+        fname, _ = QFileDialog.getSaveFileName(
+            self, "Export Config", str(CONFIG_PATH), "YAML Files (*.yaml);;JSON Files (*.json)"
+        )
         if fname:
             if fname.endswith(".json"):
                 import json
+
                 with open(fname, "w", encoding="utf-8") as f:
                     json.dump(self.config, f, indent=2)
             else:
@@ -291,10 +341,13 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Exported", f"Config exported to {fname}")
 
     def import_config(self):
-        fname, _ = QFileDialog.getOpenFileName(self, "Import Config", str(CONFIG_PATH), "YAML Files (*.yaml);;JSON Files (*.json)")
+        fname, _ = QFileDialog.getOpenFileName(
+            self, "Import Config", str(CONFIG_PATH), "YAML Files (*.yaml);;JSON Files (*.json)"
+        )
         if fname:
             if fname.endswith(".json"):
                 import json
+
                 with open(fname, "r", encoding="utf-8") as f:
                     self.config = json.load(f)
             else:
@@ -395,6 +448,7 @@ class MainWindow(QMainWindow):
 
         # Presets menu button (replaces separate combo & buttons)
         from PySide6.QtWidgets import QMenu
+
         self.presets_btn = QPushButton("Layer Presets")
         self.presets_btn.setToolTip("Manage and load presets")
         self.presets_menu = QMenu(self.presets_btn)
@@ -449,9 +503,12 @@ class MainWindow(QMainWindow):
 
         # Shadows for all primary sidebar buttons
         shadow_buttons = [
-            self.config_btn, self.presets_btn,
-            self.help_btn, self.connect_btn,
-            self.add_layer_btn, self.del_layer_btn
+            self.config_btn,
+            self.presets_btn,
+            self.help_btn,
+            self.connect_btn,
+            self.add_layer_btn,
+            self.del_layer_btn,
         ]
         for b in shadow_buttons:
             eff = QGraphicsDropShadowEffect(self)
@@ -584,7 +641,7 @@ class MainWindow(QMainWindow):
             return
         self.animations[n] = {"frames": []}
         self.animation_list.addItem(n)
-        self.animation_list.setCurrentRow(self.animation_list.count()-1)
+        self.animation_list.setCurrentRow(self.animation_list.count() - 1)
         self.mark_dirty()
 
     def _rename_animation(self):
@@ -626,7 +683,9 @@ class MainWindow(QMainWindow):
     def _delete_animation(self):
         if not self.current_animation:
             return
-        reply = QMessageBox.question(self, "Delete Animation", f"Delete '{self.current_animation}'?", QMessageBox.Yes | QMessageBox.No)
+        reply = QMessageBox.question(
+            self, "Delete Animation", f"Delete '{self.current_animation}'?", QMessageBox.Yes | QMessageBox.No
+        )
         if reply != QMessageBox.Yes:
             return
         self.animations.pop(self.current_animation, None)
@@ -643,7 +702,7 @@ class MainWindow(QMainWindow):
             return
         frames = self.animations[self.current_animation]["frames"]
         for i, fr in enumerate(frames):
-            self.frame_list.addItem(f"Frame {i+1} ({fr.get('duration',300)}ms)")
+            self.frame_list.addItem(f"Frame {i + 1} ({fr.get('duration', 300)}ms)")
         if frames:
             self.frame_list.setCurrentRow(0)
 
@@ -653,7 +712,7 @@ class MainWindow(QMainWindow):
         frames = self.animations[self.current_animation]["frames"]
         frames.append({"duration": self.frame_duration_spin.value(), "pads": {}})
         self._refresh_frames_list()
-        self.frame_list.setCurrentRow(self.frame_list.count()-1)
+        self.frame_list.setCurrentRow(self.frame_list.count() - 1)
         self.mark_dirty()
 
     def _delete_frame(self):
@@ -679,9 +738,10 @@ class MainWindow(QMainWindow):
         if idx >= len(frames):
             return
         import copy
-        frames.insert(idx+1, copy.deepcopy(frames[idx]))
+
+        frames.insert(idx + 1, copy.deepcopy(frames[idx]))
         self._refresh_frames_list()
-        self.frame_list.setCurrentRow(idx+1)
+        self.frame_list.setCurrentRow(idx + 1)
         self.mark_dirty()
 
     def _move_frame_up(self):
@@ -691,9 +751,9 @@ class MainWindow(QMainWindow):
         if idx <= 0:
             return
         frames = self.animations[self.current_animation]["frames"]
-        frames[idx-1], frames[idx] = frames[idx], frames[idx-1]
+        frames[idx - 1], frames[idx] = frames[idx], frames[idx - 1]
         self._refresh_frames_list()
-        self.frame_list.setCurrentRow(idx-1)
+        self.frame_list.setCurrentRow(idx - 1)
         self.mark_dirty()
 
     def _move_frame_down(self):
@@ -701,11 +761,11 @@ class MainWindow(QMainWindow):
             return
         idx = self.frame_list.currentRow()
         frames = self.animations[self.current_animation]["frames"]
-        if idx < 0 or idx >= len(frames)-1:
+        if idx < 0 or idx >= len(frames) - 1:
             return
-        frames[idx+1], frames[idx] = frames[idx], frames[idx+1]
+        frames[idx + 1], frames[idx] = frames[idx], frames[idx + 1]
         self._refresh_frames_list()
-        self.frame_list.setCurrentRow(idx+1)
+        self.frame_list.setCurrentRow(idx + 1)
         self.mark_dirty()
 
     def _on_frame_selected(self, row):
@@ -713,7 +773,7 @@ class MainWindow(QMainWindow):
         if self.current_animation and row >= 0:
             frames = self.animations[self.current_animation]["frames"]
             if row < len(frames):
-                self.frame_duration_spin.setValue(frames[row].get("duration",300))
+                self.frame_duration_spin.setValue(frames[row].get("duration", 300))
 
     def _refresh_animation_grid(self):
         # Clear all
@@ -793,7 +853,7 @@ class MainWindow(QMainWindow):
         # Deprecated in favor of scheduler
         pass
 
-    def _start_animation_playback(self, name, iterations: int, preview: bool=False):
+    def _start_animation_playback(self, name, iterations: int, preview: bool = False):
         if name not in self.animations:
             return
         self._schedule_animation_run(name, iterations, preview)
@@ -811,7 +871,7 @@ class MainWindow(QMainWindow):
         self._anim_timer_active = False
         self.sync_pad_lights()
 
-    def _schedule_animation_run(self, name: str, iterations: int, preview: bool=False):
+    def _schedule_animation_run(self, name: str, iterations: int, preview: bool = False):
         frames = self.animations.get(name, {}).get('frames', [])
         if not frames:
             return
@@ -829,6 +889,7 @@ class MainWindow(QMainWindow):
         if not self._anim_timer_active:
             self._anim_timer_active = True
             from PySide6.QtCore import QTimer
+
             QTimer.singleShot(0, self._anim_scheduler_tick)
 
     def _anim_scheduler_tick(self):
@@ -859,11 +920,15 @@ class MainWindow(QMainWindow):
                         inten = 'medium'
                     if not (isinstance(hex_col, str) and len(hex_col) == 7 and hex_col.startswith('#')):
                         continue
-                    r = int(hex_col[1:3],16); g=int(hex_col[3:5],16); b=int(hex_col[5:7],16)
-                    factor_map = {'low':0.4,'medium':0.7,'high':1.0}
+                    r = int(hex_col[1:3], 16)
+                    g = int(hex_col[3:5], 16)
+                    b = int(hex_col[5:7], 16)
+                    factor_map = {'low': 0.4, 'medium': 0.7, 'high': 1.0}
                     f = factor_map.get(inten, 0.7)
-                    r = max(0,min(255,int(r*f))); g=max(0,min(255,int(g*f))); b=max(0,min(255,int(b*f)))
-                    composite[(x,y)] = (r,g,b)
+                    r = max(0, min(255, int(r * f)))
+                    g = max(0, min(255, int(g * f)))
+                    b = max(0, min(255, int(b * f)))
+                    composite[(x, y)] = (r, g, b)
                 except Exception:
                     pass
         # Apply diffs vs previous composite
@@ -904,6 +969,7 @@ class MainWindow(QMainWindow):
         self._anim_runs = remaining
         # Schedule next tick
         from PySide6.QtCore import QTimer
+
         if self._anim_runs:
             QTimer.singleShot(dt, self._anim_scheduler_tick)
         else:
@@ -916,7 +982,9 @@ class MainWindow(QMainWindow):
             col = mapping.get("color")
             if isinstance(col, str) and len(col) == 7 and col.startswith('#'):
                 try:
-                    r = int(col[1:3],16); g = int(col[3:5],16); b = int(col[5:7],16)
+                    r = int(col[1:3], 16)
+                    g = int(col[3:5], 16)
+                    b = int(col[5:7], 16)
                     # Apply optional intensity scaling
                     inten = str(mapping.get("intensity", "medium")).lower()
                     factor_map = {"low": 0.4, "medium": 0.7, "high": 1.0}
@@ -931,8 +999,8 @@ class MainWindow(QMainWindow):
                                 n = int(raw_int)
                             except Exception:
                                 n = None
-                        if n in (1,2,3):
-                            inten = {1:"low", 2:"medium", 3:"high"}[n]
+                        if n in (1, 2, 3):
+                            inten = {1: "low", 2: "medium", 3: "high"}[n]
                     f = factor_map.get(inten, 0.7)
                     r = max(0, min(255, int(r * f)))
                     g = max(0, min(255, int(g * f)))
@@ -940,7 +1008,7 @@ class MainWindow(QMainWindow):
                     return (r, g, b)
                 except Exception:
                     pass
-        return (0,0,0)
+        return (0, 0, 0)
 
     def _start_animation_from_signal(self, name: str, iterations: int, preview: bool):
         # Wrapper to ensure playback starts on the GUI thread
@@ -953,7 +1021,9 @@ class MainWindow(QMainWindow):
             col = mapping.get("color") if isinstance(mapping, dict) else None
             if isinstance(col, str) and len(col) == 7 and col.startswith('#'):
                 try:
-                    r = int(col[1:3], 16); g = int(col[3:5], 16); b = int(col[5:7], 16)
+                    r = int(col[1:3], 16)
+                    g = int(col[3:5], 16)
+                    b = int(col[5:7], 16)
                     x, y = map(int, key.split(","))
                     # Skip pads that are under animation control for this playback
                     if hasattr(self, "_animation_scope") and self._animation_scope and (x, y) in self._animation_scope:
@@ -970,9 +1040,9 @@ class MainWindow(QMainWindow):
             # Clear everything first
             self.lp.clear()
             for x in range(8):
-                self.lp.set_pad_color((x, -1), (0,0,0))
+                self.lp.set_pad_color((x, -1), (0, 0, 0))
             for y in range(8):
-                self.lp.set_pad_color((8, y), (0,0,0))
+                self.lp.set_pad_color((8, y), (0, 0, 0))
             # Apply base
             for (x, y), rgb in (self._animation_base_colors or {}).items():
                 self.lp.set_pad_color((x, y), rgb)
@@ -980,7 +1050,9 @@ class MainWindow(QMainWindow):
             pass
 
     def _export_animations(self):
-        fname, _ = QFileDialog.getSaveFileName(self, "Export Animations", str(PROJECT_ROOT / "animations.yaml"), "YAML Files (*.yaml)")
+        fname, _ = QFileDialog.getSaveFileName(
+            self, "Export Animations", str(PROJECT_ROOT / "animations.yaml"), "YAML Files (*.yaml)"
+        )
         if not fname:
             return
         try:
@@ -1019,16 +1091,16 @@ class MainWindow(QMainWindow):
             except Exception:
                 app.setStyle("Fusion")
             palette = QPalette()
-            palette.setColor(QPalette.Window, QColor(30,30,32))
+            palette.setColor(QPalette.Window, QColor(30, 30, 32))
             palette.setColor(QPalette.WindowText, Qt.white)
-            palette.setColor(QPalette.Base, QColor(24,24,26))
-            palette.setColor(QPalette.AlternateBase, QColor(40,40,44))
+            palette.setColor(QPalette.Base, QColor(24, 24, 26))
+            palette.setColor(QPalette.AlternateBase, QColor(40, 40, 44))
             palette.setColor(QPalette.ToolTipBase, Qt.white)
             palette.setColor(QPalette.ToolTipText, Qt.white)
             palette.setColor(QPalette.Text, Qt.white)
-            palette.setColor(QPalette.Button, QColor(45,45,50))
+            palette.setColor(QPalette.Button, QColor(45, 45, 50))
             palette.setColor(QPalette.ButtonText, Qt.white)
-            palette.setColor(QPalette.Highlight, QColor(70,120,200))
+            palette.setColor(QPalette.Highlight, QColor(70, 120, 200))
             palette.setColor(QPalette.HighlightedText, Qt.white)
             app.setPalette(palette)
             # Install custom arrow style
@@ -1073,7 +1145,8 @@ class MainWindow(QMainWindow):
                 QPushButton { text-decoration: none; }
                 QToolTip { color:#fff; background:#444; border:1px solid #666; }
                 * { font-family: "%s"; }
-                """ % (self.custom_font_family or "Segoe UI")
+                """
+                % (self.custom_font_family or "Segoe UI")
             )
 
     def add_layer_dialog(self):
@@ -1085,10 +1158,12 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Layer", "Layer already exists.")
             return
         # Initialize with default navigation buttons (same colors as main layer spec)
-        self.layers[layer_name] = {"pads": {
-            "2,-1": {"type": "layer nav", "nav": "prev", "color": "#2980b9"},
-            "3,-1": {"type": "layer nav", "nav": "next", "color": "#8e44ad"}
-        }}
+        self.layers[layer_name] = {
+            "pads": {
+                "2,-1": {"type": "layer nav", "nav": "prev", "color": "#2980b9"},
+                "3,-1": {"type": "layer nav", "nav": "next", "color": "#8e44ad"},
+            }
+        }
         self.layer_list.addItem(layer_name)
         row = self.layer_list.count() - 1
         self.layer_list.setCurrentRow(row)
@@ -1100,7 +1175,9 @@ class MainWindow(QMainWindow):
         if current == "main":
             QMessageBox.warning(self, "Layer", "Cannot delete the primary 'main' layer.")
             return
-        reply = QMessageBox.question(self, "Delete Layer", f"Delete layer '{current}'?", QMessageBox.Yes | QMessageBox.No)
+        reply = QMessageBox.question(
+            self, "Delete Layer", f"Delete layer '{current}'?", QMessageBox.Yes | QMessageBox.No
+        )
         if reply != QMessageBox.Yes:
             return
         self.layers.pop(current, None)
@@ -1108,7 +1185,9 @@ class MainWindow(QMainWindow):
         self.layer_list.clear()
         self.layer_list.addItems(list(self.layers.keys()))
         # Fallback to main
-        self.active_layer = "main" if "main" in self.layers else (next(iter(self.layers.keys())) if self.layers else "main")
+        self.active_layer = (
+            "main" if "main" in self.layers else (next(iter(self.layers.keys())) if self.layers else "main")
+        )
         if self.active_layer not in self.layers:
             self.layers[self.active_layer] = {"pads": {}}
             self.layer_list.addItem(self.active_layer)
@@ -1151,13 +1230,14 @@ class MainWindow(QMainWindow):
             except Exception:
                 continue
         _debug_log("Custom font CASCADIACODE.TTF not found; using fallback.")
-    def init_midi(self, auto: bool=False):
+
+    def init_midi(self, auto: bool = False):
         if not LaunchpadController:
             if not auto:
                 QMessageBox.warning(
                     self,
                     "MIDI",
-                    "Launchpad backend not available. Install dependencies:\npip install mido python-rtmidi"
+                    "Launchpad backend not available. Install dependencies:\npip install mido python-rtmidi",
                 )
             return
         if self.lp:
@@ -1171,7 +1251,11 @@ class MainWindow(QMainWindow):
         except Exception as e:
             if auto:
                 # Small informational dialog only if auto attempt fails; user can still click Connect later
-                QMessageBox.information(self, "Launchpad", f"No Launchpad found (autoconnect failed).\nYou can plug it in and click 'Connect Launchpad'.\n\nError: {e}")
+                QMessageBox.information(
+                    self,
+                    "Launchpad",
+                    f"No Launchpad found (autoconnect failed).\nYou can plug it in and click 'Connect Launchpad'.\n\nError: {e}",
+                )
             else:
                 QMessageBox.warning(self, "MIDI", f"Could not open Launchpad: {e}")
             self.lp = None
@@ -1201,6 +1285,7 @@ class MainWindow(QMainWindow):
     def _normalize_all_mappings(self):
         def legacy_to_space(t: str) -> str:
             return {"layer_nav": "layer nav", "switch_layer": "switch layer", "run_process": "run process"}.get(t, t)
+
         changed = False
         for layer_data in self.layers.values():
             pads = layer_data.get("pads", {}) if isinstance(layer_data, dict) else {}
@@ -1345,7 +1430,7 @@ class MainWindow(QMainWindow):
                 if not isinstance(ui, dict):
                     ui = {}
                 mode = (res.get('start_mode') or 'normal').lower()
-                if mode not in ('normal','minimized','hidden'):
+                if mode not in ('normal', 'minimized', 'hidden'):
                     mode = 'normal'
                 # Always persist start_mode; manual launches ignore it (applied only if autostart)
                 ui['start_mode'] = mode
@@ -1362,11 +1447,16 @@ class MainWindow(QMainWindow):
                 # Apply mode immediately
                 if not ui['autostart_enabled']:
                     # Manual run always shown normal regardless of chosen mode when autostart is off
-                    self.showNormal(); self.raise_(); self.activateWindow()
+                    self.showNormal()
+                    self.raise_()
+                    self.activateWindow()
                 elif mode == 'normal':
-                    self.showNormal(); self.raise_(); self.activateWindow()
+                    self.showNormal()
+                    self.raise_()
+                    self.activateWindow()
                 elif mode == 'minimized':
-                    self.show(); self.showMinimized()
+                    self.show()
+                    self.showMinimized()
                 elif mode == 'hidden':
                     self.hide()
                 self.statusBar().showMessage('Settings saved.', 4000)
@@ -1378,6 +1468,7 @@ class MainWindow(QMainWindow):
             return False
         try:
             import winreg
+
             key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_ALL_ACCESS) as key:
                 value_name = 'LaunchpadMapper'
@@ -1450,9 +1541,9 @@ class MainWindow(QMainWindow):
                 "layer": "main",
                 "pads": {
                     "2,-1": {"type": "layer nav", "nav": "prev", "color": "#2980b9"},
-                    "3,-1": {"type": "layer nav", "nav": "next", "color": "#8e44ad"}
+                    "3,-1": {"type": "layer nav", "nav": "next", "color": "#8e44ad"},
                 },
-                "animations": {}
+                "animations": {},
             }
             with open(empty, "w", encoding="utf-8") as f:
                 yaml.dump(sample, f)
@@ -1494,12 +1585,14 @@ class MainWindow(QMainWindow):
             self.layers[self.active_layer] = {"pads": {}}
         # Keep navigation pads if already present, otherwise seed them
         pads = self.layers[self.active_layer].get("pads", {})
-        for nav_def in (("2,-1", {"type": "layer nav", "nav": "prev", "color": "#2980b9"}),
-                        ("3,-1", {"type": "layer nav", "nav": "next", "color": "#8e44ad"})):
+        for nav_def in (
+            ("2,-1", {"type": "layer nav", "nav": "prev", "color": "#2980b9"}),
+            ("3,-1", {"type": "layer nav", "nav": "next", "color": "#8e44ad"}),
+        ):
             pads.setdefault(nav_def[0], nav_def[1])
         # Clear all other pads for this layer only
         for k in list(pads.keys()):
-            if k not in ("2,-1","3,-1"):
+            if k not in ("2,-1", "3,-1"):
                 pads.pop(k)
         self.layers[self.active_layer]["pads"] = pads
         self.update_grid()
@@ -1508,7 +1601,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Created preset '{safe}'", 4000)
 
     def _sanitize_name(self, name: str) -> str:
-        return "".join(c for c in name if c.isalnum() or c in ('-','_')).strip()
+        return "".join(c for c in name if c.isalnum() or c in ('-', '_')).strip()
 
     def _write_preset_file(self, path: Path):
         # Layer-scoped preset file; store pads for the active layer and embed referenced animations
@@ -1556,7 +1649,12 @@ class MainWindow(QMainWindow):
         if len(existing) <= 1:
             QMessageBox.warning(self, "Preset", "Cannot delete the last remaining preset.")
             return
-        reply = QMessageBox.question(self, "Delete Layer Preset", f"Delete preset '{self.current_preset_name}'?", QMessageBox.Yes | QMessageBox.No)
+        reply = QMessageBox.question(
+            self,
+            "Delete Layer Preset",
+            f"Delete preset '{self.current_preset_name}'?",
+            QMessageBox.Yes | QMessageBox.No,
+        )
         if reply != QMessageBox.Yes:
             return
         path = PRESETS_DIR / f"{self.current_preset_name}.yaml"
@@ -1609,7 +1707,7 @@ class MainWindow(QMainWindow):
 
     def load_preset(self, name: str):
         """Load a layer-scoped preset: replace only current layer's pads.
-        
+
         Security: Validates path is within PRESETS_DIR to prevent path traversal.
         """
         path = PRESETS_DIR / f"{name}.yaml"
@@ -1641,8 +1739,12 @@ class MainWindow(QMainWindow):
         if self.active_layer not in self.layers:
             self.layers[self.active_layer] = {"pads": {}}
         # Preserve navigation buttons if missing
-        nav_prev = self.layers[self.active_layer]["pads"].get("2,-1", {"type": "layer nav", "nav": "prev", "color": "#2980b9"})
-        nav_next = self.layers[self.active_layer]["pads"].get("3,-1", {"type": "layer nav", "nav": "next", "color": "#8e44ad"})
+        nav_prev = self.layers[self.active_layer]["pads"].get(
+            "2,-1", {"type": "layer nav", "nav": "prev", "color": "#2980b9"}
+        )
+        nav_next = self.layers[self.active_layer]["pads"].get(
+            "3,-1", {"type": "layer nav", "nav": "next", "color": "#8e44ad"}
+        )
         self.layers[self.active_layer]["pads"] = {**pads}
         self.layers[self.active_layer]["pads"].setdefault("2,-1", nav_prev)
         self.layers[self.active_layer]["pads"].setdefault("3,-1", nav_next)
@@ -1671,10 +1773,18 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Loaded layer preset '{name}'", 4000)
 
     def _apply_default_config(self):
-        self.config = {"active_layer": "main", "layers": {"main": {"pads": {
-            "2,-1": {"type": "layer nav", "nav": "prev", "color": "#2980b9"},
-            "3,-1": {"type": "layer nav", "nav": "next", "color": "#8e44ad"}
-        }}}, "animations": {}}
+        self.config = {
+            "active_layer": "main",
+            "layers": {
+                "main": {
+                    "pads": {
+                        "2,-1": {"type": "layer nav", "nav": "prev", "color": "#2980b9"},
+                        "3,-1": {"type": "layer nav", "nav": "next", "color": "#8e44ad"},
+                    }
+                }
+            },
+            "animations": {},
+        }
         self.active_layer = "main"
         self.layers = self.config["layers"]
         self.animations = self.config.get("animations", {})
@@ -1687,9 +1797,6 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
             self.sync_pad_lights()
-
-
-
 
     # load_selected_preset deprecated (use load_preset via menu)
 
@@ -1748,12 +1855,15 @@ class MainWindow(QMainWindow):
             if act:
                 self._perform_media_control(act, steps)
         self.pad_pressed.emit(x, y)
+
     def on_pad_release(self, pad):
         self.pad_released.emit(pad[0], pad[1])
+
     def animate_pad_press(self, x, y):
         btn = self.pad_buttons.get((x, y))
         if btn:
             btn.set_pressed(True)
+
     def animate_pad_release(self, x, y):
         btn = self.pad_buttons.get((x, y))
         if btn:
@@ -1805,7 +1915,7 @@ class MainWindow(QMainWindow):
                     self.last_color = color
                     # Store intensity when a color is set
                     inten = (dlg.intensity_select.currentText() or "medium").lower()
-                    if inten not in ("low","medium","high"):
+                    if inten not in ("low", "medium", "high"):
                         inten = "medium"
                     new_map["intensity"] = inten
                 # Do not persist a color-only mapping without a color value
@@ -1817,15 +1927,16 @@ class MainWindow(QMainWindow):
             self.sync_pad_lights()
             if self._ready:
                 self.mark_dirty()
+
     def _launch_app_silent(self, path: str, args: str = ""):
         """Launch an app with optional arguments without opening a console window.
-        
+
         Security: Validates path exists and uses shell=False to prevent command injection.
         """
         # Security: Validate that the path exists and is a file
         if not os.path.isfile(path):
             raise FileNotFoundError(f"Application not found: {path}")
-        
+
         # Use subprocess.DEVNULL for automatic resource management
         # subprocess.DEVNULL is available in Python 3.3+ (app requires 3.11+)
         kwargs = {'stdout': subprocess.DEVNULL, 'stderr': subprocess.DEVNULL}
@@ -1853,6 +1964,7 @@ class MainWindow(QMainWindow):
                 subprocess.Popen([path], shell=False, **kwargs)
             except Exception:
                 raise e
+
     def update_grid(self):
         for pad, btn in self.pad_buttons.items():
             mapping = self.get_pad_mapping(pad)
@@ -1861,11 +1973,13 @@ class MainWindow(QMainWindow):
             else:
                 btn.update_color(None)
         self.sync_pad_lights()
+
     def switch_layer(self, name):
         self.active_layer = name
         self.update_grid()
         self.sync_pad_lights()
-    def save_config(self, silent: bool=False):
+
+    def save_config(self, silent: bool = False):
         """Persist full configuration (layers + animations)."""
         self.config["active_layer"] = self.active_layer
         self.config["layers"] = self.layers
@@ -1898,11 +2012,13 @@ class MainWindow(QMainWindow):
             if not silent:
                 QMessageBox.warning(self, "Save", f"Failed to save config: {e}")
         self._dirty = False
+
     def load_config(self):
         if CONFIG_PATH.exists():
             with open(CONFIG_PATH, "r", encoding="utf-8") as f:
                 return yaml.safe_load(f) or {}
         return {"active_layer": "main", "layers": {"main": {"pads": {}}}}
+
     def load_config_dialog(self):
         fname, _ = QFileDialog.getOpenFileName(self, "Load Config", str(CONFIG_PATH), "YAML Files (*.yaml)")
         if fname:
@@ -1919,10 +2035,13 @@ class MainWindow(QMainWindow):
 
     # Duplicate init_ui removed to ensure control buttons (top & side) are displayed.
 
+
 class CaretSpinStyle(QProxyStyle):
     """Draws clear white triangles (up/down) + combobox arrow against transparent background."""
+
     def drawPrimitive(self, element, option, painter, widget=None):
         from PySide6.QtGui import QPolygon
+
         targets = (QStyle.PE_IndicatorSpinUp, QStyle.PE_IndicatorSpinDown, QStyle.PE_IndicatorArrowDown)
         if element in targets:
             painter.save()
@@ -1930,17 +2049,18 @@ class CaretSpinStyle(QProxyStyle):
             painter.setRenderHint(QPainter.Antialiasing, True)
             # Faint hover background
             if option.state & QStyle.State_MouseOver:
-                painter.fillRect(option.rect, QColor(255,255,255,28))
+                painter.fillRect(option.rect, QColor(255, 255, 255, 28))
             # Triangle points
-            cx = r.center().x(); cy = r.center().y()
+            cx = r.center().x()
+            cy = r.center().y()
             if element == QStyle.PE_IndicatorSpinUp:
-                pts = [QPoint(cx, cy-5), QPoint(cx-5, cy+3), QPoint(cx+5, cy+3)]
+                pts = [QPoint(cx, cy - 5), QPoint(cx - 5, cy + 3), QPoint(cx + 5, cy + 3)]
             elif element == QStyle.PE_IndicatorSpinDown:
-                pts = [QPoint(cx, cy+5), QPoint(cx-5, cy-3), QPoint(cx+5, cy-3)]
+                pts = [QPoint(cx, cy + 5), QPoint(cx - 5, cy - 3), QPoint(cx + 5, cy - 3)]
             else:  # combobox
-                pts = [QPoint(cx, cy+5), QPoint(cx-6, cy-2), QPoint(cx+6, cy-2)]
-            painter.setBrush(QColor(255,255,255))
-            painter.setPen(QPen(QColor(255,255,255), 1))
+                pts = [QPoint(cx, cy + 5), QPoint(cx - 6, cy - 2), QPoint(cx + 6, cy - 2)]
+            painter.setBrush(QColor(255, 255, 255))
+            painter.setPen(QPen(QColor(255, 255, 255), 1))
             painter.drawPolygon(QPolygon(pts))
             painter.restore()
             return
@@ -1982,7 +2102,7 @@ def main():
     if cli_hidden:
         effective_mode = 'hidden'
     elif is_autostart:
-        effective_mode = saved_mode if saved_mode in ('normal','minimized','hidden') else 'normal'
+        effective_mode = saved_mode if saved_mode in ('normal', 'minimized', 'hidden') else 'normal'
     else:
         effective_mode = 'normal'
     # Optional: --preset <name> to force-load a layer preset file (presets/<name>.yaml) after config
@@ -1993,7 +2113,7 @@ def main():
             if idx + 1 < len(sys.argv):
                 preset_to_load = sys.argv[idx + 1]
                 # remove both
-                del sys.argv[idx:idx+2]
+                del sys.argv[idx : idx + 2]
             else:
                 # remove flag only if no value provided
                 sys.argv.remove('--preset')
@@ -2034,6 +2154,7 @@ def main():
             pass
         try:
             server = QLocalServer(app)
+
             def _on_new_conn():
                 try:
                     sock = server.nextPendingConnection()
@@ -2044,7 +2165,9 @@ def main():
                     win._tray_show()
                 except Exception:
                     try:
-                        win.showNormal(); win.raise_(); win.activateWindow()
+                        win.showNormal()
+                        win.raise_()
+                        win.activateWindow()
                     except Exception:
                         pass
                 # Read/close socket
@@ -2058,6 +2181,7 @@ def main():
                         sock.disconnectFromServer()
                     except Exception:
                         pass
+
             if server.listen(server_name):
                 try:
                     server.newConnection.connect(_on_new_conn)
@@ -2075,6 +2199,7 @@ def main():
         try:
             # Only load if file exists to avoid warning popups on silent background start
             from pathlib import Path as _P
+
             preset_path = PRESETS_DIR / f"{preset_to_load}.yaml"
             if preset_path.exists():
                 win.load_preset(preset_to_load)
@@ -2086,6 +2211,7 @@ def main():
         if effective_mode == 'minimized':
             win.showMinimized()
         _debug_log('win.show() returned. Entering event loop...')
+
     # --- Cleanup hooks (best-effort) ---
     def _cleanup_leds_and_ports():
         try:
@@ -2101,6 +2227,7 @@ def main():
                     pass
         except Exception:
             pass
+
     try:
         app.aboutToQuit.connect(_cleanup_leds_and_ports)
     except Exception:
@@ -2109,6 +2236,7 @@ def main():
         atexit.register(_cleanup_leds_and_ports)
     except Exception:
         pass
+
     def _signal_handler(signum, frame):
         _cleanup_leds_and_ports()
         try:
@@ -2117,6 +2245,7 @@ def main():
             raise
         except Exception:
             pass
+
     for _sig_name in ('SIGINT', 'SIGTERM', 'SIGBREAK'):
         s = getattr(signal, _sig_name, None)
         if s is not None:
@@ -2133,9 +2262,11 @@ def main():
         _debug_log(''.join(traceback.format_exception(e)))
         raise
 
+
 # ---- System-level helpers (Windows specific for media / hotkeys) ----
 if sys.platform == 'win32':
     import ctypes
+
     user32 = ctypes.WinDLL('user32', use_last_error=True)
     KEYEVENTF_KEYUP = 0x0002
     VK_MEDIA_NEXT_TRACK = 0xB0
@@ -2153,6 +2284,7 @@ if sys.platform == 'win32':
         'win': 0x5B,
         'super': 0x5B,
     }
+
 
 def _vk_for_token(tok: str):
     t = tok.lower().strip()
@@ -2173,6 +2305,7 @@ def _vk_for_token(tok: str):
         return ord(t.upper())
     return None
 
+
 def _send_vk_sequence(down_then_up):
     if sys.platform != 'win32':
         return
@@ -2180,6 +2313,7 @@ def _send_vk_sequence(down_then_up):
         user32.keybd_event(vk, 0, 0, 0)
     for vk in reversed(down_then_up):
         user32.keybd_event(vk, 0, KEYEVENTF_KEYUP, 0)
+
 
 def MainWindow__perform_hotkey(self, combo: str):
     """Execute a hotkey or a sequence of hotkey chords i.e. a macro!
@@ -2217,6 +2351,7 @@ def MainWindow__perform_hotkey(self, combo: str):
             # Small delay between chords to mimic natural sequence timing
             QThread.msleep(55)
 
+
 def MainWindow__perform_media_control(self, action: str, steps: int = 1):
     if sys.platform != 'win32':
         return
@@ -2233,6 +2368,7 @@ def MainWindow__perform_media_control(self, action: str, steps: int = 1):
         steps = max(1, min(25, int(steps)))
         for _ in range(steps):
             _send_vk_sequence([vk])
+
 
 # Monkey patch helper methods into class (avoid reorganizing large class body)
 MainWindow._perform_hotkey = MainWindow__perform_hotkey  # type: ignore
