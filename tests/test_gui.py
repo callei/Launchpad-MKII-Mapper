@@ -22,6 +22,19 @@ def test_closed_pad_editors_are_freed(win):
     assert len(win.findChildren(QDialog)) == 0
 
 
+def test_infinite_animation_pad_toggles(win):
+    win.animations["blink"] = {"frames": [{"duration": 500, "pads": {"0,0": "#ff0000"}}]}
+    win.layers[win.active_layer]["pads"]["1,1"] = {"type": "animation", "name": "blink", "iterations": 0}
+    win.on_pad_press((1, 1))
+    assert [r["name"] for r in win._anim_runs] == ["blink"]
+    win._anim_scheduler_tick()  # light the frame
+    win.on_pad_press((1, 1))
+    assert win._anim_runs == []
+    assert win.lp.colors[-1] == ((0, 0), (0, 0, 0))  # pad restored to its (unmapped) base color
+    win.on_pad_press((1, 1))
+    assert [r["name"] for r in win._anim_runs] == ["blink"]
+
+
 def test_app_picker_stops_scan_thread_on_close(win):
     import widgets
 

@@ -885,6 +885,20 @@ class MainWindow(QMainWindow):
 
             QTimer.singleShot(0, self._anim_scheduler_tick)
 
+    def _stop_infinite_runs(self, name: str) -> bool:
+        """Stop loop-forever runs of `name` and restore pads no other run is drawing. Returns True if any stopped."""
+        keep = [r for r in self._anim_runs if not (r['name'] == name and r['iterations'] is None)]
+        if len(keep) == len(self._anim_runs):
+            return False
+        self._anim_runs = keep
+        still_drawn = {tuple(map(int, key.split(','))) for r in keep for key in r['frames'][r['index']].get('pads', {})}
+        for pad in list(self._anim_composite_prev):
+            if pad not in still_drawn:
+                del self._anim_composite_prev[pad]
+                if self.lp:
+                    self.lp.set_pad_color(pad, self._get_base_color(pad))
+        return True
+
     def _anim_scheduler_tick(self):
         # If no runs, restore any composite leftovers and stop timer
         if not self._anim_runs:
@@ -1813,8 +1827,10 @@ class MainWindow(QMainWindow):
             anim_name = mapping.get("name")
             if anim_name and anim_name in self.animations:
                 iterations = mapping.get("iterations", 1)
-                # Emit to ensure main-thread start (0=infinite, 1=single cycle)
-                self.start_animation_requested.emit(anim_name, iterations, False)
+                # Loop-forever animations toggle: a press while running stops them instead of stacking another run
+                if not (iterations <= 0 and self._stop_infinite_runs(anim_name)):
+                    # 0=infinite, 1=single cycle
+                    self.start_animation_requested.emit(anim_name, iterations, False)
         elif mapping and mapping.get("type") == "launch app":
             path = mapping.get("path")
             args = mapping.get("args", "")
