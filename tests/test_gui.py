@@ -199,6 +199,30 @@ def test_add_and_delete_layer_trigger_autosave(win, monkeypatch):
     assert "extra" not in win.layers and dirty == [1, 1]
 
 
+def _start_looping(win, name):
+    win.animations[name] = {"frames": [{"duration": 500, "pads": {"0,0": "#ff0000"}}]}
+    win.animation_list.addItem(name)
+    win.layers[win.active_layer]["pads"]["1,1"] = {"type": "animation", "name": name, "iterations": 0}
+    win.on_pad_press((1, 1))
+    win.current_animation = name
+
+
+def test_renamed_running_animation_still_toggles(win, monkeypatch):
+    import widgets
+
+    _start_looping(win, "blink")
+    monkeypatch.setattr(widgets.TextInputPopup, "get_text", lambda self: ("flash", True))
+    win._rename_animation()
+    win.on_pad_press((1, 1))  # pad now refers to 'flash': must stop the running loop, not add one
+    assert win._anim_runs == []
+
+
+def test_deleting_running_animation_stops_it(win):
+    _start_looping(win, "blink")
+    win._delete_animation()  # QMessageBox.question is patched to Yes
+    assert win._anim_runs == []
+
+
 def test_app_picker_stops_scan_thread_on_close(win):
     import widgets
 

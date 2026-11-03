@@ -653,6 +653,10 @@ class MainWindow(QMainWindow):
             for mapping in pads.values():
                 if isinstance(mapping, dict) and mapping.get("type") == "animation" and mapping.get("name") == old:
                     mapping["name"] = new_name
+        # Running runs follow the rename, so their pad can still stop them
+        for run in self._anim_runs:
+            if run['name'] == old:
+                run['name'] = new_name
         # Refresh list
         self.animation_list.clear()
         self.animation_list.addItems(sorted(self.animations.keys()))
@@ -673,6 +677,8 @@ class MainWindow(QMainWindow):
         if reply != QMessageBox.Yes:
             return
         self.animations.pop(self.current_animation, None)
+        # A deleted loop-forever animation could otherwise never be stopped (finite runs end by themselves)
+        self._stop_infinite_runs(self.current_animation)
         self.animation_list.clear()
         self.animation_list.addItems(sorted(self.animations.keys()))
         self.current_animation = None
