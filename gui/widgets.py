@@ -57,6 +57,8 @@ class FramelessPopup(QDialog):
 
     def __init__(self, title: str = "", parent=None, allow_minimize: bool = False):
         super().__init__(parent)
+        # Free the popup once closed; otherwise every opened popup stays parented to the main window forever
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Dialog)
         # Enable transparent corners so mask + rounded visuals show properly
         self.setAttribute(Qt.WA_TranslucentBackground, True)
@@ -545,6 +547,7 @@ class AppPickerDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
         self.setWindowTitle("Choose Installed Application")
         self.resize(560, 540)
         v = QVBoxLayout(self)
@@ -572,6 +575,12 @@ class AppPickerDialog(QDialog):
         self._worker.resultReady.connect(self._on_scan_done)
         self._worker.start()
         QTimer.singleShot(0, self.filter_edit.setFocus)
+
+    def done(self, result):
+        # Don't leave the Start-menu scan running after the picker closes
+        self._worker.stop()
+        self._worker.wait(2000)
+        super().done(result)
 
     def _on_scan_done(self, entries):
         self._raw_entries = entries

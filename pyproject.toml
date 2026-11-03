@@ -33,6 +33,8 @@ quote-style = "preserve"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# faulthandler aborts on SEH exceptions that Qt handles internally on Windows
+addopts = "-p no:faulthandler"
 
 [build-system]
 requires = ["setuptools", "wheel"]
