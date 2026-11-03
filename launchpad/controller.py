@@ -29,6 +29,7 @@ class LaunchpadController:
         self.on_release: Optional[Callable[[PadCoord], None]] = None
         self.allow_virtual = allow_virtual
         self.virtual = False  # When True, no hardware present and we just log actions
+        self.virtual_reason: Optional[str] = None  # Why open() fell back to virtual mode (shown to the user)
         # mapping_mode: 'linear' (0..63) or 'mk2'
         self.mapping_mode = mapping_mode
         self.rgb_highlight = rgb_highlight
@@ -55,6 +56,7 @@ class LaunchpadController:
         if not in_name or not out_name:
             if self.allow_virtual:
                 self.virtual = True
+                self.virtual_reason = "Launchpad not found. Is it plugged in?"
                 print("[controller] Hardware not found; entering virtual mode. Incoming pad presses won't arrive.")
                 return
             raise RuntimeError(f"Launchpad MIDI ports not found. Inputs={inputs} Outputs={outputs}")
@@ -79,6 +81,10 @@ class LaunchpadController:
             self.outport = None
             if self.allow_virtual:
                 self.virtual = True
+                self.virtual_reason = (
+                    f"Launchpad found but its MIDI port could not be opened ({e}). "
+                    "Another program (e.g. a DAW) may be using it."
+                )
                 print(f"[controller] MIDI open failed: {e}. Entering virtual mode. Incoming pad presses won't arrive.")
                 return
             raise
@@ -101,6 +107,9 @@ class LaunchpadController:
                 self.outport.close()
             except Exception:
                 pass
+        # Idempotent: shutdown calls close() from several hooks (closeEvent, aboutToQuit, atexit)
+        self.inport = None
+        self.outport = None
 
     # --- Event Handling ---
     def _handle_message(self, msg: mido.Message):

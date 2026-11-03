@@ -1258,9 +1258,18 @@ class MainWindow(QMainWindow):
         # Callbacks run on the rtmidi thread: only emit signals there, handle on the GUI thread
         self.lp.on_press = lambda pad: self._midi_pressed.emit(pad[0], pad[1])
         self.lp.on_release = lambda pad: self._midi_released.emit(pad[0], pad[1])
-        self.statusBar().showMessage(
-            "Launchpad connected (virtual mode)" if self.lp.virtual else "Launchpad connected", 5000
-        )
+        if self.lp.virtual:
+            reason = getattr(self.lp, 'virtual_reason', None) or "No Launchpad connected."
+            self.statusBar().showMessage(f"Virtual mode: {reason}", 15000)
+            if not auto:
+                # Only on explicit Connect/Reconnect; the automatic attempt at startup (possibly hidden) stays quiet
+                QMessageBox.information(
+                    self,
+                    "Launchpad",
+                    f"{reason}\n\nRunning in virtual mode. Fix this, then click 'Connect Launchpad' again.",
+                )
+        else:
+            self.statusBar().showMessage("Launchpad connected", 5000)
         self.sync_pad_lights()
 
     # --- Config / persistence helpers ---
@@ -1345,10 +1354,9 @@ class MainWindow(QMainWindow):
             self.save_config(silent=True)
         except Exception:
             pass
-        # Ensure hardware LEDs are cleared when window closes
+        # Ensure hardware LEDs are cleared when window closes (close() clears first)
         try:
             if self.lp:
-                self.lp.clear(full=True)
                 self.lp.close()
         except Exception:
             pass
@@ -2224,10 +2232,7 @@ def main():
             w = _GLOBAL_WIN
             if w and getattr(w, 'lp', None):
                 try:
-                    w.lp.clear(full=True)
-                except Exception:
-                    pass
-                try:
+                    # Clears LEDs, then closes; a no-op if closeEvent already did it
                     w.lp.close()
                 except Exception:
                     pass

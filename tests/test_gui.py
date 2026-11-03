@@ -131,6 +131,38 @@ def test_switch_layer_pad_to_missing_layer_is_ignored(win):
     assert win.active_layer == "main"
 
 
+def _virtual_controller(reason):
+    from conftest import FakeController
+
+    class Virtual(FakeController):
+        def open(self):
+            self.virtual = True
+            self.virtual_reason = reason
+
+    return Virtual
+
+
+def test_manual_connect_explains_virtual_mode(win, lpm, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    shown = []
+    monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda parent, title, text: shown.append(text)))
+    monkeypatch.setattr(lpm, "LaunchpadController", _virtual_controller("port busy"))
+    win.init_midi(auto=False)
+    assert len(shown) == 1 and "port busy" in shown[0]
+
+
+def test_auto_connect_reports_virtual_mode_in_status_bar_only(win, lpm, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    shown = []
+    monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a: shown.append(a)))
+    monkeypatch.setattr(lpm, "LaunchpadController", _virtual_controller("port busy"))
+    win.init_midi(auto=True)
+    assert shown == []
+    assert "port busy" in win.statusBar().currentMessage()
+
+
 def test_app_picker_stops_scan_thread_on_close(win):
     import widgets
 

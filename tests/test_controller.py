@@ -67,6 +67,36 @@ def test_clear_turns_off_every_mk2_pad():
     assert leds == {lp.pad_to_note(pad) for pad in ALL_PADS}
 
 
+def test_open_without_device_records_reason(monkeypatch):
+    monkeypatch.setattr(mido, "get_input_names", lambda: [])
+    monkeypatch.setattr(mido, "get_output_names", lambda: [])
+    lp = LaunchpadController()
+    lp.open()
+    assert lp.virtual and "not found" in lp.virtual_reason
+
+
+def test_open_busy_port_records_reason(monkeypatch):
+    monkeypatch.setattr(mido, "get_input_names", lambda: ["Launchpad MK2 0"])
+    monkeypatch.setattr(mido, "get_output_names", lambda: ["Launchpad MK2 1"])
+
+    def busy(name):
+        raise OSError("MIDI port in use")
+
+    monkeypatch.setattr(mido, "open_output", busy)
+    lp = LaunchpadController()
+    lp.open()
+    assert lp.virtual and "MIDI port in use" in lp.virtual_reason
+
+
+def test_close_twice_sends_clear_once():
+    lp = connected_controller()
+    out = lp.outport
+    lp.close()
+    lp.close()
+    lp.clear(full=True)
+    assert len(out.sent) == 1
+
+
 def test_virtual_mode_sends_nothing():
     lp = connected_controller()
     lp.virtual = True
