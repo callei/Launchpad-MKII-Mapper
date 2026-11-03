@@ -126,25 +126,11 @@ class MainWindow(QMainWindow):
     def sync_pad_lights(self):
         if not hasattr(self, 'lp') or self.lp is None:
             return
-        # If animations are active, avoid clearing everything to reduce flicker.
         anim_active = bool(getattr(self, '_anim_runs', []))
         composite = getattr(self, '_anim_composite_prev', {}) if anim_active else {}
-        if not anim_active:
-            # Clear grid notes
-            self.lp.clear()
-            # Explicitly clear top row & side column
-            for x in range(8):
-                try:
-                    self.lp.set_pad_color((x, -1), (0, 0, 0))
-                except Exception:
-                    pass
-            for y in range(8):
-                try:
-                    self.lp.set_pad_color((8, y), (0, 0, 0))
-                except Exception:
-                    pass
 
-        # Apply base mapping to all pads, but don't overwrite pads currently set by animations
+        # Paint every pad with its base color (off when unmapped), so no clear is needed first;
+        # clearing then repainting made the pads flicker. Don't overwrite pads currently set by animations.
         def _set_base(pad_xy, rgb):
             if pad_xy in composite:
                 return
@@ -195,6 +181,7 @@ class MainWindow(QMainWindow):
         self._anim_runs = []  # list of dicts: {name, frames, index, time_left, iterations(None|int), started_seq}
         self._anim_composite_prev = {}  # pad(tuple)->(r,g,b)
         self._anim_timer_active = False
+        self._anim_timer = None
         self._anim_start_seq = 0
         self.current_preset_name = None  # Track which preset is currently loaded
         self.lp = None
@@ -853,16 +840,14 @@ class MainWindow(QMainWindow):
 
     def _stop_animation_playback(self):
         # Stop all animation runs and restore base lights on affected pads
+        was_animating = bool(self._anim_runs or self._anim_composite_prev)
         self._anim_runs = []
-        if self.lp:
-            try:
-                for pad in list(self._anim_composite_prev.keys()):
-                    self.lp.set_pad_color(pad, self._get_base_color(pad))
-            except Exception:
-                pass
+        if self._anim_timer is not None:
+            self._anim_timer.stop()
         self._anim_composite_prev = {}
         self._anim_timer_active = False
-        self.sync_pad_lights()
+        if was_animating:
+            self.sync_pad_lights()
 
     def _schedule_animation_run(self, name: str, iterations: int, preview: bool = False):
         frames = self.animations.get(name, {}).get('frames', [])
@@ -881,9 +866,15 @@ class MainWindow(QMainWindow):
         self._anim_runs.append(run)
         if not self._anim_timer_active:
             self._anim_timer_active = True
-            from PySide6.QtCore import QTimer
+            self._restart_anim_timer(0)
 
-            QTimer.singleShot(0, self._anim_scheduler_tick)
+    def _restart_anim_timer(self, ms: int):
+        # One restartable timer, so stopping playback cancels the pending tick (no duplicate tick chains)
+        if self._anim_timer is None:
+            self._anim_timer = QTimer(self)
+            self._anim_timer.setSingleShot(True)
+            self._anim_timer.timeout.connect(lambda: self._anim_scheduler_tick())
+        self._anim_timer.start(ms)
 
     def _stop_infinite_runs(self, name: str) -> bool:
         """Stop loop-forever runs of `name` and restore pads no other run is drawing. Returns True if any stopped."""
@@ -975,12 +966,7 @@ class MainWindow(QMainWindow):
                 remaining.append(run)
         self._anim_runs = remaining
         # Schedule next tick
-        from PySide6.QtCore import QTimer
-
-        if self._anim_runs:
-            QTimer.singleShot(dt, self._anim_scheduler_tick)
-        else:
-            QTimer.singleShot(0, self._anim_scheduler_tick)
+        self._restart_anim_timer(dt if self._anim_runs else 0)
 
     def _get_base_color(self, pad):
         """Return the base RGB color for a pad from the current layer mapping, or off if none."""
@@ -1768,17 +1754,8 @@ class MainWindow(QMainWindow):
             self.save_config(silent=True)
         except Exception:
             pass
-        # Hard clear hardware to avoid lingering lights from previous preset
-        if self.lp:
-            try:
-                self.lp.clear(full=True)
-            except Exception:
-                pass
+        # Repaints every pad, so no lights linger from the previous preset
         self.update_grid()
-        # Extra refresh to avoid first-click blanking
-        self.sync_pad_lights()
-        self.update_grid()
-        self.sync_pad_lights()
         self.statusBar().showMessage(f"Loaded layer preset '{name}'", 4000)
 
     def _apply_default_config(self):
@@ -1800,12 +1777,6 @@ class MainWindow(QMainWindow):
         self.layer_list.clear()
         self.layer_list.addItems(["main"])
         self.update_grid()
-        if self.lp:
-            try:
-                self.lp.clear(full=True)
-            except Exception:
-                pass
-            self.sync_pad_lights()
 
     # load_selected_preset deprecated (use load_preset via menu)
 
@@ -1823,8 +1794,8 @@ class MainWindow(QMainWindow):
                 else:
                     new_index = (cur + 1) % len(names)
                 self.active_layer = names[new_index]
+                # Triggers switch_layer (via currentTextChanged), which repaints
                 self.layer_list.setCurrentRow(new_index)
-                self.update_grid()
         elif mapping and mapping.get("type") == "animation":
             anim_name = mapping.get("name")
             if anim_name and anim_name in self.animations:
@@ -1943,7 +1914,6 @@ class MainWindow(QMainWindow):
                 else:
                     self.layers[self.active_layer]["pads"][pad_key] = new_map
             self.update_grid()
-            self.sync_pad_lights()
             if self._ready:
                 self.mark_dirty()
 
@@ -1996,7 +1966,6 @@ class MainWindow(QMainWindow):
     def switch_layer(self, name):
         self.active_layer = name
         self.update_grid()
-        self.sync_pad_lights()
 
     def save_config(self, silent: bool = False):
         """Persist full configuration (layers + animations)."""

@@ -35,6 +35,55 @@ def test_infinite_animation_pad_toggles(win):
     assert [r["name"] for r in win._anim_runs] == ["blink"]
 
 
+def test_loaded_preset_legacy_types_are_normalized(win):
+    win.load_preset("empty")  # shipped preset uses legacy 'layer_nav'
+    assert win.get_pad_mapping((3, -1))["type"] == "layer nav"
+
+
+def _reset_led_log(win):
+    win.lp.colors.clear()
+    win.lp.clears = 0
+
+
+def test_layer_switch_paints_each_pad_once(win):
+    win.layers["second"] = {"pads": {}}
+    _reset_led_log(win)
+    win.switch_layer("second")
+    assert win.lp.clears == 0
+    assert len(win.lp.colors) == 80 == len({pad for pad, _ in win.lp.colors})
+
+
+def test_hardware_layer_nav_paints_each_pad_once(win):
+    win.layers["second"] = {"pads": {}}
+    win.layer_list.addItem("second")
+    _reset_led_log(win)
+    win.on_pad_press((3, -1))  # default "next" nav pad
+    assert win.active_layer == "second"
+    assert len(win.lp.colors) == 80
+
+
+def test_load_preset_paints_each_pad_once(win, lpm):
+    _reset_led_log(win)
+    win.load_preset("empty")
+    assert len(win.lp.colors) == 80
+
+
+def test_stopping_animations_does_not_leave_a_second_tick_chain(win, qapp, monkeypatch):
+    win.animations["blink"] = {"frames": [{"duration": 30, "pads": {"0,0": "#ff0000"}}]}
+    win._start_animation_playback("blink", 0)
+    _flush_deletes()  # let the first tick run and schedule the next one
+    win._stop_animation_playback()
+    ticks = []
+    real_tick = win._anim_scheduler_tick
+    monkeypatch.setattr(win, "_anim_scheduler_tick", lambda: (ticks.append(1), real_tick()))
+    win._start_animation_playback("blink", 0)
+    loop = QEventLoop()
+    QTimer.singleShot(200, loop.quit)
+    loop.exec()
+    win._stop_animation_playback()
+    assert len(ticks) <= 200 // 30 + 2  # one chain: ~one tick per 30 ms frame
+
+
 def test_app_picker_stops_scan_thread_on_close(win):
     import widgets
 

@@ -215,6 +215,11 @@ class LaunchpadController:
                 return
             except Exception:
                 pass
+        if self.mapping_mode == 'mk2':
+            # MK2 pads are notes 11..89 plus top row 104..111, not 0..63
+            pads = [(x, y) for y in range(8) for x in range(9)] + [(x, -1) for x in range(8)]
+            self.set_many((pad, (0, 0, 0)) for pad in pads)
+            return
         for note in range(64):
             self._safe_send(mido.Message('note_on', note=note, velocity=0))
 

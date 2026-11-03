@@ -63,6 +63,13 @@ def test_set_pad_color_sends_mk2_rgb_sysex():
     assert list(msg.data) == [0x00, 0x20, 0x29, 0x02, 0x18, 0x0B, 81, 63, 0, 63]
 
 
+def test_clear_turns_off_every_mk2_pad():
+    lp = connected_controller()
+    lp.clear()
+    leds = {msg.data[6] for msg in lp.outport.sent}
+    assert leds == {lp.pad_to_note(pad) for pad in ALL_PADS}
+
+
 def test_virtual_mode_sends_nothing():
     lp = connected_controller()
     lp.virtual = True

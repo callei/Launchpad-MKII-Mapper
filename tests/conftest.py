@@ -52,7 +52,13 @@ def lpm(monkeypatch):
 
 @pytest.fixture
 def win(qapp, lpm, monkeypatch):
+    import shutil
+
     from PySide6.QtWidgets import QMessageBox
+
+    # Fresh app data per window: earlier tests' autosaves must not leak into the next one
+    shutil.rmtree(lpm.APPDATA_DIR, ignore_errors=True)
+    lpm.APPDATA_DIR.mkdir(parents=True)
 
     for name in ("information", "warning", "question", "critical"):
         monkeypatch.setattr(QMessageBox, name, staticmethod(lambda *a, **k: QMessageBox.Yes))
