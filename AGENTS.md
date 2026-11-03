@@ -9,7 +9,9 @@ Windows desktop app (Python 3.11, PySide6) that maps Novation Launchpad MKII pad
 - Install deps from `requirements.txt` (includes `pywin32`, which `pyproject.toml` lacks).
 
 ## Verifying changes
-- `.venv\Scripts\python.exe -m pytest` (single test: `-m pytest tests/test_controller.py::test_mk2_known_notes`). Tests cover only `launchpad/controller.py` pure logic, without hardware.
+- `.venv\Scripts\python.exe -m pytest` (single test: `-m pytest tests/test_controller.py::test_mk2_known_notes`).
+  - `tests/conftest.py` runs Qt offscreen, points `APPDATA` at a temp dir (wiped per `win` fixture) and swaps in `FakeController`, which records LED writes. Tests never touch real config or the real Launchpad; keep it that way.
+  - faulthandler is disabled in `pyproject.toml`: on Windows it aborts on exceptions Qt handles itself. Assert on `len(...)` of Qt object lists; pytest's repr of live Qt objects has crashed.
 - Lint/format: `.venv\Scripts\ruff.exe check .` and `ruff format .` (config in `pyproject.toml`). A PostToolUse hook (`.claude/hooks/ruff_hook.py`) formats each edited `.py` file and reports lint errors.
 - GUI and MIDI behavior is verified by running from source with a real Launchpad MKII connected.
 - Without hardware the controller silently falls back to virtual mode (no input, LED writes dropped), so GUI-only checks don't prove MIDI/LED behavior. Say so when you couldn't test on hardware.

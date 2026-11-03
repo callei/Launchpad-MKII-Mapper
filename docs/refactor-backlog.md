@@ -17,6 +17,10 @@ Line numbers drift, so search by name.
 - `_play_animation_frame`: empty, "deprecated".
 - `validate_pad_mapping`: never called.
 - `load_config`: never called.
+- `init_midi`'s `except` branch around `self.lp.open()`: unreachable, because `open()` falls back to virtual mode (and records `virtual_reason`) instead of raising.
+- `LaunchpadController.highlight_pads`: never called.
+
+- **Layer selection through the list widget**: hardware layer nav, "switch layer" pads, add/delete layer all change layers by calling `layer_list.setCurrentRow`, which repaints via `currentTextChanged` -> `switch_layer`. It works, but layer state lives partly in a widget; a `set_active_layer()` would make it explicit.
 
 ## Structural
 - `_perform_hotkey` / `_perform_media_control` are module-level functions monkey-patched onto `MainWindow`.
