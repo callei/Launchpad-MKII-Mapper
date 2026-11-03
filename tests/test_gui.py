@@ -96,6 +96,26 @@ def test_zero_duration_infinite_animation_does_not_hang(win, monkeypatch):
     assert not t.is_alive(), "scheduler tick never returned"
 
 
+def test_rebuilding_layer_list_keeps_active_layer(win):
+    win._apply_default_config()  # clears + refills the layer list
+    assert win.active_layer == "main"
+    assert win.layer_list.currentItem().text() == "main"
+
+
+def test_startup_repairs_missing_active_layer(qapp, lpm, win):
+    import yaml
+
+    lpm.CONFIG_PATH.write_text(yaml.dump({"active_layer": "", "layers": {"main": {"pads": {}}}}), encoding="utf-8")
+    w2 = lpm.MainWindow()
+    try:
+        assert w2.active_layer == "main"
+        assert w2.layer_list.currentItem().text() == "main"
+    finally:
+        w2._force_quit = True
+        w2.close()
+        w2.deleteLater()
+
+
 def test_app_picker_stops_scan_thread_on_close(win):
     import widgets
 

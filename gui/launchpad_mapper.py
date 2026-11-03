@@ -337,6 +337,7 @@ class MainWindow(QMainWindow):
             self.layers = self.config.get("layers", {})
             self.layer_list.clear()
             self.layer_list.addItems(list(self.layers.keys()))
+            self._select_active_layer_row()
             self.update_grid()
 
     def show_help(self):
@@ -1273,6 +1274,8 @@ class MainWindow(QMainWindow):
                     self.active_layer = self.config.get("active_layer", "main")
                     self.layers = self.config.get("layers", {}) or {"main": {"pads": {}}}
                     self.animations = self.config.get("animations", {}) or {}
+                    if self.active_layer not in self.layers:  # e.g. '' saved by an older build
+                        self.active_layer = next(iter(self.layers))
             except Exception:
                 pass
 
@@ -1777,6 +1780,7 @@ class MainWindow(QMainWindow):
         self.animations = self.config.get("animations", {})
         self.layer_list.clear()
         self.layer_list.addItems(["main"])
+        self._select_active_layer_row()
         self.update_grid()
 
     # load_selected_preset deprecated (use load_preset via menu)
@@ -1964,7 +1968,21 @@ class MainWindow(QMainWindow):
                 btn.update_color(None)
         self.sync_pad_lights()
 
+    def _select_active_layer_row(self):
+        """After rebuilding layer_list: make sure active_layer exists and is the selected row."""
+        names = list(self.layers)
+        if not names:
+            self.layers["main"] = {"pads": {}}
+            self.layer_list.addItem("main")
+            names = ["main"]
+        if self.active_layer not in names:
+            self.active_layer = names[0]
+        self.layer_list.setCurrentRow(names.index(self.active_layer))
+
     def switch_layer(self, name):
+        # layer_list.clear() emits currentTextChanged("") while the list is rebuilt
+        if name not in self.layers:
+            return
         self.active_layer = name
         self.update_grid()
 
@@ -2018,6 +2036,7 @@ class MainWindow(QMainWindow):
             self.animations = self.config.get("animations", {})
             self.layer_list.clear()
             self.layer_list.addItems(list(self.layers.keys()))
+            self._select_active_layer_row()
             self.update_grid()
             self._normalize_all_mappings()
             self.mark_dirty()
