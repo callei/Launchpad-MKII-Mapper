@@ -1829,15 +1829,12 @@ class MainWindow(QMainWindow):
             cmd = mapping.get("command")
             if cmd:
                 try:
-                    # Security: Use shell=False to prevent command injection
-                    # Parse command string safely using shlex
-                    try:
-                        cmd_list = shlex.split(cmd, posix=(sys.platform != 'win32'))
-                        subprocess.Popen(cmd_list, shell=False)
-                    except ValueError:
-                        # If shlex fails, try simple split as fallback but still no shell
-                        cmd_list = cmd.split()
-                        subprocess.Popen(cmd_list, shell=False)
+                    # Security: shell=False, so no shell interprets the command
+                    if sys.platform == 'win32':
+                        # Windows parses the command line itself; splitting first broke quoted paths
+                        subprocess.Popen(cmd, shell=False)
+                    else:
+                        subprocess.Popen(shlex.split(cmd), shell=False)
                 except Exception as e:
                     QMessageBox.warning(self, "Run Process", f"Failed: {e}")
         elif mapping and mapping.get("type") == "hotkey":
@@ -1939,8 +1936,15 @@ class MainWindow(QMainWindow):
         if not os.path.isfile(path):
             raise FileNotFoundError(f"Application not found: {path}")
 
+        if sys.platform == 'win32' and Path(path).suffix.lower() not in ('.exe', '.com', '.bat', '.cmd'):
+            # Documents, shortcuts (.lnk/.url) etc. can't be executed; open them with their default app
+            if args:
+                os.startfile(path, arguments=args)
+            else:
+                os.startfile(path)
+            return
+
         # Use subprocess.DEVNULL for automatic resource management
-        # subprocess.DEVNULL is available in Python 3.3+ (app requires 3.11+)
         kwargs = {'stdout': subprocess.DEVNULL, 'stderr': subprocess.DEVNULL}
         if sys.platform == 'win32':
             CREATE_NO_WINDOW = 0x08000000
@@ -1948,24 +1952,11 @@ class MainWindow(QMainWindow):
             si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             kwargs['startupinfo'] = si
             kwargs['creationflags'] = CREATE_NO_WINDOW
-        # Build command
-        cmd = [path]
-        if args:
-            # Parse arguments safely for Windows compatibility
-            try:
-                parts = shlex.split(args, posix=False)
-                cmd.extend(parts)
-            except Exception:
-                # fallback: pass as single parameter
-                cmd.append(args)
-        try:
-            subprocess.Popen(cmd, shell=False, **kwargs)
-        except Exception as e:
-            # Fallback to plain execution (still with shell=False for security)
-            try:
-                subprocess.Popen([path], shell=False, **kwargs)
-            except Exception:
-                raise e from None
+            # Pass args through verbatim; splitting them kept quote characters that then got escaped
+            cmd = subprocess.list2cmdline([path]) if not args else f'{subprocess.list2cmdline([path])} {args}'
+        else:
+            cmd = [path, *shlex.split(args)]
+        subprocess.Popen(cmd, shell=False, **kwargs)
 
     def update_grid(self):
         for pad, btn in self.pad_buttons.items():
