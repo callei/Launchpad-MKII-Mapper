@@ -94,6 +94,7 @@ from launchpad.animation import AnimationEngine, Tick  # noqa: E402
 from launchpad.leds import LedPainter  # noqa: E402
 from launchpad.layers import LayerSet  # noqa: E402
 from launchpad.actions import ActionRunner, SystemAdapter  # noqa: E402
+from launchpad import port as lp_port  # noqa: E402
 
 # AppData configuration location (Windows). Fallback: project root.
 APPDATA_DIR = Path(os.environ.get("APPDATA", Path.home())) / "LaunchpadMapper"
@@ -137,7 +138,17 @@ class MainWindow(QMainWindow):
         self.layer_set = LayerSet()
         # OS actions (launch/run/hotkey/media); later chords of a hotkey sequence are timed by the event loop
         self.action_runner = ActionRunner(SystemAdapter(), defer=QTimer.singleShot)
-        self.lp = None
+        # The Launchpad connection; presses arrive on the rtmidi thread, so only emit signals there.
+        # The factory looks LaunchpadController up at connect time (tests swap it in after construction).
+        self.port = lp_port.LaunchpadPort(lambda: LaunchpadController())
+        self.port.on_press = lambda pad: self._midi_pressed.emit(pad[0], pad[1])
+        self.port.on_release = lambda pad: self._midi_released.emit(pad[0], pad[1])
+        self.port.subscribe(self._on_port_state)
+        self._port_was_lost = False
+        # Hot-plug: init_midi starts this; it notices unplugs and reconnects on replug
+        self._port_poll_timer = QTimer(self)
+        self._port_poll_timer.setInterval(2000)
+        self._port_poll_timer.timeout.connect(self.port.poll)
         # Internal dirty tracking for debounced autosave
         self._dirty = False
         self._save_debounce_timer = None
@@ -937,45 +948,32 @@ class MainWindow(QMainWindow):
                     "Launchpad backend not available. Install dependencies:\npip install mido python-rtmidi",
                 )
             return
-        if self.lp:
-            try:
-                self.lp.close()
-            except Exception:
-                pass
-        self.lp = LaunchpadController()
-        try:
-            self.lp.open()
-        except Exception as e:
-            if auto:
-                # Small informational dialog only if auto attempt fails; user can still click Connect later
-                QMessageBox.information(
-                    self,
-                    "Launchpad",
-                    f"No Launchpad found (autoconnect failed).\nYou can plug it in and click 'Connect Launchpad'.\n\nError: {e}",
-                )
+        self.port.connect()
+        self._port_poll_timer.start()
+        if self.port.state == lp_port.VIRTUAL and not auto:
+            # Only on explicit Connect/Reconnect; the automatic attempt at startup (possibly hidden) stays quiet
+            QMessageBox.information(
+                self,
+                "Launchpad",
+                f"{self.port.reason}\n\nRunning in virtual mode. Plugging the Launchpad in reconnects it; "
+                "otherwise fix this, then click 'Connect Launchpad' again.",
+            )
+
+    def _on_port_state(self):
+        state, reason = self.port.state, self.port.reason
+        if state == lp_port.CONNECTED:
+            if self._port_was_lost:
+                self._report_action_error("Launchpad reconnected")
             else:
-                QMessageBox.warning(self, "MIDI", f"Could not open Launchpad: {e}")
-            self.lp = None
-            self.leds.attach(None)
-            return
-        # Callbacks run on the rtmidi thread: only emit signals there, handle on the GUI thread
-        self.lp.on_press = lambda pad: self._midi_pressed.emit(pad[0], pad[1])
-        self.lp.on_release = lambda pad: self._midi_released.emit(pad[0], pad[1])
-        if self.lp.virtual:
-            reason = getattr(self.lp, 'virtual_reason', None) or "No Launchpad connected."
-            self.statusBar().showMessage(f"Virtual mode: {reason}", 15000)
-            if not auto:
-                # Only on explicit Connect/Reconnect; the automatic attempt at startup (possibly hidden) stays quiet
-                QMessageBox.information(
-                    self,
-                    "Launchpad",
-                    f"{reason}\n\nRunning in virtual mode. Fix this, then click 'Connect Launchpad' again.",
-                )
+                self.statusBar().showMessage(reason, 5000)
+            # A new controller's LEDs are unknown: attaching makes this paint every pad
+            self.leds.attach(self.port)
+            self.leds.paint()
+        elif state == lp_port.LOST:
+            self._report_action_error(f"{reason} Plug it back in to reconnect.")
         else:
-            self.statusBar().showMessage("Launchpad connected", 5000)
-        # A new controller's LEDs are unknown: attaching makes this paint every pad
-        self.leds.attach(self.lp)
-        self.leds.paint()
+            self.statusBar().showMessage(f"Virtual mode: {reason}", 15000)
+        self._port_was_lost = state == lp_port.LOST
 
     def mark_dirty(self):
         self._dirty = True
@@ -1012,11 +1010,8 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         # Ensure hardware LEDs are cleared when window closes (close() clears first)
-        try:
-            if self.lp:
-                self.lp.close()
-        except Exception:
-            pass
+        self._port_poll_timer.stop()
+        self.port.close()
         super().closeEvent(event)
 
     # --- System tray ---
@@ -1598,10 +1593,10 @@ def main():
     def _cleanup_leds_and_ports():
         try:
             w = _GLOBAL_WIN
-            if w and getattr(w, 'lp', None):
+            if w and getattr(w, 'port', None):
                 try:
                     # Clears LEDs, then closes; a no-op if closeEvent already did it
-                    w.lp.close()
+                    w.port.close()
                 except Exception:
                     pass
         except Exception:

@@ -17,6 +17,8 @@ class FakeController:
 
     def __init__(self, *args, **kwargs):
         self.virtual = False
+        self.virtual_reason = None
+        self.present = True  # what is_present() reports (the MIDI device list)
         self.on_press = None
         self.on_release = None
         self.colors = []
@@ -27,6 +29,9 @@ class FakeController:
 
     def close(self):
         pass
+
+    def is_present(self):
+        return self.present
 
     def clear(self, full=False):
         self.clears += 1

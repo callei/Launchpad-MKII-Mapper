@@ -27,10 +27,11 @@ def test_infinite_animation_pad_toggles(win):
     win.layers[win.active_layer]["pads"]["1,1"] = {"type": "animation", "name": "blink", "iterations": 0}
     win.on_pad_press((1, 1))
     assert win.anim.running == ["blink"]
-    assert win.lp.colors[-1][0] == (0, 0) and win.lp.colors[-1][1] != (0, 0, 0)  # first frame lit right away
+    pad, rgb = win.port.controller.colors[-1]
+    assert pad == (0, 0) and rgb != (0, 0, 0)  # first frame lit right away
     win.on_pad_press((1, 1))
     assert win.anim.running == []
-    assert win.lp.colors[-1] == ((0, 0), (0, 0, 0))  # pad restored to its (unmapped) base color
+    assert win.port.controller.colors[-1] == ((0, 0), (0, 0, 0))  # pad restored to its (unmapped) base color
     win.on_pad_press((1, 1))
     assert win.anim.running == ["blink"]
 
@@ -41,8 +42,8 @@ def test_loaded_preset_legacy_types_are_normalized(win):
 
 
 def _reset_led_log(win):
-    win.lp.colors.clear()
-    win.lp.clears = 0
+    win.port.controller.colors.clear()
+    win.port.controller.clears = 0
 
 
 def test_layer_switch_paints_each_pad_once(win):
@@ -51,8 +52,8 @@ def test_layer_switch_paints_each_pad_once(win):
     _reset_led_log(win)
     win.layer_list.setCurrentRow(1)  # user picks "second" in the list
     assert win.active_layer == "second"
-    assert win.lp.clears == 0
-    assert len(win.lp.colors) == 80 == len({pad for pad, _ in win.lp.colors})
+    assert win.port.controller.clears == 0
+    assert len(win.port.controller.colors) == 80 == len({pad for pad, _ in win.port.controller.colors})
 
 
 def test_hardware_layer_nav_paints_each_pad_once(win):
@@ -61,13 +62,13 @@ def test_hardware_layer_nav_paints_each_pad_once(win):
     _reset_led_log(win)
     win.on_pad_press((3, -1))  # default "next" nav pad
     assert win.active_layer == "second"
-    assert len(win.lp.colors) == 80
+    assert len(win.port.controller.colors) == 80
 
 
 def test_load_preset_paints_each_pad_once(win, lpm):
     _reset_led_log(win)
     win.load_preset("empty")
-    assert len(win.lp.colors) == 80
+    assert len(win.port.controller.colors) == 80
 
 
 def test_stopping_animations_does_not_leave_a_second_tick_chain(win, qapp, monkeypatch):
@@ -263,7 +264,7 @@ def test_deleting_running_animation_stops_it(win):
     _start_looping(win, "blink")
     win._delete_animation()  # QMessageBox.question is patched to Yes
     assert win.anim.running == []
-    assert win.lp.colors[-1] == ((0, 0), (0, 0, 0))  # its pad is restored
+    assert win.port.controller.colors[-1] == ((0, 0), (0, 0, 0))  # its pad is restored
 
 
 def test_app_picker_stops_scan_thread_on_close(win):
@@ -279,8 +280,22 @@ def test_hardware_press_is_handled_on_gui_thread(win, qapp):
     seen = []
     win.on_pad_press = lambda pad: seen.append((pad, QThread.currentThread() is qapp.thread()))
     win.init_midi()  # re-bind controller callbacks
-    t = threading.Thread(target=win.lp.on_press, args=((0, 0),))
+    t = threading.Thread(target=win.port.controller.on_press, args=((0, 0),))
     t.start()
     t.join()
     qapp.processEvents()
     assert seen == [((0, 0), True)]
+
+
+def test_unplug_is_reported_and_replug_repaints_every_pad(win):
+    old = win.port.controller
+    old.present = False
+    win.port.poll()
+    assert win.port.state == "lost"
+    assert "unplugged" in win.statusBar().currentMessage()
+    old.present = True  # replugged
+    win.port.poll()
+    assert win.port.controller is not old
+    assert win.port.state == "connected"
+    assert "reconnected" in win.statusBar().currentMessage()
+    assert len(win.port.controller.colors) == 80

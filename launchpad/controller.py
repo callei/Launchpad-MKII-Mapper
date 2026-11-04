@@ -40,19 +40,23 @@ class LaunchpadController:
 
     # --- Internal helpers ---
     def _safe_send(self, msg: mido.Message):
+        # Send errors (e.g. the device was unplugged) propagate: LaunchpadPort turns them into LOST
         if self.virtual or not self.outport:
             return
-        try:
-            self.outport.send(msg)
-        except Exception:
-            # suppress send errors (e.g., device disconnected during shutdown)
-            pass
+        self.outport.send(msg)
 
     # --- Device Discovery ---
     def open(self) -> None:
         """Open MIDI ports; if unavailable or opening fails, fall back to virtual mode (if allowed)."""
-        inputs = mido.get_input_names()
-        outputs = mido.get_output_names()
+        try:
+            inputs = mido.get_input_names()
+            outputs = mido.get_output_names()
+        except Exception as e:
+            if self.allow_virtual:
+                self.virtual = True
+                self.virtual_reason = f"Could not list MIDI devices ({e})."
+                return
+            raise
         in_name = next((n for n in inputs if self.input_name_substr in n), None)
         out_name = next((n for n in outputs if self.output_name_substr in n), None)
         if not in_name or not out_name:
@@ -90,6 +94,15 @@ class LaunchpadController:
                 print(f"[controller] MIDI open failed: {e}. Entering virtual mode. Incoming pad presses won't arrive.")
                 return
             raise
+
+    def is_present(self) -> bool:
+        """Whether a matching Launchpad input and output are in the MIDI device list right now."""
+        try:
+            return any(self.input_name_substr in n for n in mido.get_input_names()) and any(
+                self.output_name_substr in n for n in mido.get_output_names()
+            )
+        except Exception:
+            return False
 
     # We avoid forcing programmer mode now to prevent unintended pad colors.
 
@@ -232,10 +245,3 @@ class LaunchpadController:
             return
         for note in range(64):
             self._safe_send(mido.Message('note_on', note=note, velocity=0))
-
-    def highlight_pads(self, pads: Iterable[PadCoord], rgb=(0, 64, 255)):
-        """Light only provided pads with provided RGB (default blue)."""
-        items = list(pads)
-        if not items:
-            return
-        self.set_many((pad, rgb) for pad in items)

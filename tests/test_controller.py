@@ -103,3 +103,33 @@ def test_virtual_mode_sends_nothing():
     lp.set_pad_color((0, 0), (255, 255, 255))
     lp.clear(full=True)
     assert lp.outport.sent == []
+
+
+def test_send_errors_reach_the_caller():
+    class GoneOut:
+        def send(self, msg):
+            raise OSError("device unplugged")
+
+    lp = LaunchpadController()
+    lp.outport = GoneOut()
+    with pytest.raises(OSError):
+        lp.set_pad_color((0, 0), (255, 0, 0))
+    lp.close()  # shutdown after an unplug still closes quietly
+
+
+def test_open_when_listing_devices_fails_records_reason(monkeypatch):
+    def broken():
+        raise OSError("no MIDI backend")
+
+    monkeypatch.setattr(mido, "get_input_names", broken)
+    lp = LaunchpadController()
+    lp.open()
+    assert lp.virtual and "no MIDI backend" in lp.virtual_reason
+
+
+def test_is_present_needs_both_ports(monkeypatch):
+    monkeypatch.setattr(mido, "get_input_names", lambda: ["Launchpad MK2 0"])
+    monkeypatch.setattr(mido, "get_output_names", lambda: [])
+    assert not LaunchpadController().is_present()
+    monkeypatch.setattr(mido, "get_output_names", lambda: ["Launchpad MK2 1"])
+    assert LaunchpadController().is_present()
