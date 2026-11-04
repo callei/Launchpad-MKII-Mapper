@@ -97,7 +97,9 @@ def test_zero_duration_infinite_animation_does_not_hang(win, monkeypatch):
 
 
 def test_rebuilding_layer_list_keeps_active_layer(win):
-    win._apply_default_config()  # clears + refills the layer list
+    from launchpad import config_store
+
+    win._apply_config(config_store.default_config())  # clears + refills the layer list
     assert win.active_layer == "main"
     assert win.layer_list.currentItem().text() == "main"
 
@@ -185,6 +187,26 @@ def test_import_config_loads_animations_normalizes_and_saves(win, lpm, monkeypat
     assert "wave" in win.animations
     assert win.get_pad_mapping((0, 0))["type"] == "run process"
     assert dirty
+
+
+def test_load_config_dialog_rejects_bad_file_and_stops_animations(win, monkeypatch, tmp_path):
+    import yaml
+    from PySide6.QtWidgets import QFileDialog
+
+    bad, good = tmp_path / "bad.yaml", tmp_path / "good.yaml"
+    bad.write_text("- not\n- a mapping\n", encoding="utf-8")
+    good.write_text(yaml.dump({"layers": {"b": {"pads": {}}, "a": {"pads": {}}}}, sort_keys=False), encoding="utf-8")
+    picked = []
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", staticmethod(lambda *a, **k: (str(picked[-1]), "")))
+    picked.append(bad)
+    win.load_config_dialog()
+    assert "main" in win.layers  # unchanged
+    win.animations["blink"] = {"frames": [{"duration": 500, "pads": {"0,0": "#ff0000"}}]}
+    win._start_animation_playback("blink", 0)
+    picked.append(good)
+    win.load_config_dialog()
+    assert win._anim_runs == []
+    assert win.active_layer == "b" and win.layer_list.count() == 2
 
 
 def test_add_and_delete_layer_trigger_autosave(win, monkeypatch):

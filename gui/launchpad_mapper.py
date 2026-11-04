@@ -32,11 +32,9 @@ from widgets import (
     TextInputPopup,
     PadEditorDialog,
 )
-import yaml
 import re
 import copy
 import traceback
-import shutil
 import atexit
 import signal
 import getpass
@@ -89,6 +87,8 @@ try:
     from launchpad.controller import LaunchpadController
 except ImportError:
     LaunchpadController = None
+from launchpad import config_store  # noqa: E402
+from launchpad.config_store import ConfigStore, PresetError, UnsafePresetName  # noqa: E402
 
 # AppData configuration location (Windows). Fallback: project root.
 APPDATA_DIR = Path(os.environ.get("APPDATA", Path.home())) / "LaunchpadMapper"
@@ -96,21 +96,9 @@ APPDATA_DIR.mkdir(parents=True, exist_ok=True)
 CONFIG_PATH = APPDATA_DIR / "config.yaml"
 PRESETS_DIR = APPDATA_DIR / "presets"
 
-
-# Security helper functions
-def _is_safe_path(base_dir: Path, user_path: Path) -> bool:
-    # Validate that user_path is within base_dir to prevent path traversal attacks.
-    try:
-        # Resolve both paths to absolute, canonical paths
-        base = base_dir.resolve()
-        target = user_path.resolve()
-        # Use relative_to() which raises ValueError if target is not under base
-        # This is more secure than string comparison
-        target.relative_to(base)
-        return True
-    except (OSError, ValueError):
-        # ValueError raised if target is not relative to base
-        return False
+# Shipped presets copied into PRESETS_DIR on first run (dev tree, frozen onedir, or its _internal dir)
+_EXE_DIR = Path(sys.executable).resolve().parent
+PRESET_SEED_DIRS = [PROJECT_ROOT / 'presets', _EXE_DIR / 'presets', _EXE_DIR / '_internal' / 'presets']
 
 
 def _to_int(value, default: int) -> int:
@@ -167,23 +155,6 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("")  # Remove default title text (taskbar icon still shows app name)
         self.resize(860, 540)
         self._drag_pos: QPoint | None = None
-        # Start with an empty layout (user can load preset/config)
-        # Include default layer navigation buttons (top: x=2 back, x=3 forward)
-        self.config = {
-            "active_layer": "main",
-            "layers": {
-                "main": {
-                    "pads": {
-                        "2,-1": {"type": "layer nav", "nav": "prev", "color": "#2980b9"},
-                        "3,-1": {"type": "layer nav", "nav": "next", "color": "#8e44ad"},
-                    }
-                }
-            },
-            "animations": {},
-        }
-        self.active_layer = "main"
-        self.layers = self.config["layers"]
-        self.animations = self.config.get("animations", {})  # name -> {frames:[{duration:int, pads:{"x,y":"#rrggbb"}}]}
         self.current_animation = None
         self.current_frame_index = 0
         # Animation playback scheduler (supports concurrent runs)
@@ -197,13 +168,17 @@ class MainWindow(QMainWindow):
         # Internal dirty tracking for debounced autosave
         self._dirty = False
         self._save_debounce_timer = None
-        # Presets support
-        self.ensure_presets_dir()
-        self.create_initial_preset_if_missing()
-        # Attempt to load existing config (including animations) before building UI
-        config_loaded = self._load_config_on_startup()
-        # Normalize any legacy mapping type names
-        self._normalize_all_mappings()
+        # Persistence: config.yaml + presets/ (load the saved config, incl. animations, before building UI)
+        self.store = ConfigStore(APPDATA_DIR, seed_dirs=PRESET_SEED_DIRS)
+        try:
+            self.store.ensure_presets()
+        except OSError:
+            pass
+        loaded = self.store.load()
+        # Falls back to defaults (main layer + nav pads) when there is no readable config.yaml.
+        # animations: name -> {frames:[{duration:int, pads:{"x,y":"#rrggbb"}}]}
+        self._apply_config(loaded.config, dirty=False)
+        config_loaded = loaded.loaded
         # Flag to suppress autosave during initial construction
         self._ready = False
         # Connect signals for thread-safe UI updates
@@ -220,7 +195,7 @@ class MainWindow(QMainWindow):
         self.apply_theme()
         self._install_tray()
         # Fresh install only: config.yaml already holds the user's pads, and loading a preset would replace them
-        if not config_loaded and (PRESETS_DIR / "empty.yaml").exists():
+        if not config_loaded and self.store.has_preset("empty"):
             try:
                 self.load_preset("empty")
             except Exception:
@@ -308,40 +283,46 @@ class MainWindow(QMainWindow):
 
     def export_config(self):
         fname, _ = QFileDialog.getSaveFileName(
-            self, "Export Config", str(CONFIG_PATH), "YAML Files (*.yaml);;JSON Files (*.json)"
+            self, "Export Config", str(self.store.config_path), "YAML Files (*.yaml);;JSON Files (*.json)"
         )
         if fname:
-            if fname.endswith(".json"):
-                import json
-
-                with open(fname, "w", encoding="utf-8") as f:
-                    json.dump(self.config, f, indent=2)
-            else:
-                with open(fname, "w", encoding="utf-8") as f:
-                    yaml.dump(self.config, f, sort_keys=False)
+            try:
+                config_store.export_file(self.config, fname)
+            except Exception as e:
+                QMessageBox.warning(self, "Export", f"Failed to export: {e}")
+                return
             QMessageBox.information(self, "Exported", f"Config exported to {fname}")
 
     def import_config(self):
-        fname, _ = QFileDialog.getOpenFileName(
-            self, "Import Config", str(CONFIG_PATH), "YAML Files (*.yaml);;JSON Files (*.json)"
-        )
-        if fname:
-            if fname.endswith(".json"):
-                import json
+        self._load_config_file("Import Config", "YAML Files (*.yaml);;JSON Files (*.json)")
 
-                with open(fname, "r", encoding="utf-8") as f:
-                    self.config = json.load(f)
-            else:
-                with open(fname, "r", encoding="utf-8") as f:
-                    self.config = yaml.safe_load(f) or {}
-            self.active_layer = self.config.get("active_layer", "main")
-            self.layers = self.config.get("layers", {})
-            self.animations = self.config.get("animations", {}) or {}
-            self.layer_list.clear()
-            self.layer_list.addItems(list(self.layers.keys()))
-            self._select_active_layer_row()
-            self._normalize_all_mappings()
-            self.update_grid()
+    def load_config_dialog(self):
+        self._load_config_file("Load Config", "YAML Files (*.yaml)")
+
+    def _load_config_file(self, title: str, file_filter: str):
+        fname, _ = QFileDialog.getOpenFileName(self, title, str(self.store.config_path), file_filter)
+        if not fname:
+            return
+        result = self.store.load(fname)
+        if not result.loaded:
+            QMessageBox.warning(self, title, "\n".join(result.problems))
+            return
+        self._apply_config(result.config)
+
+    def _apply_config(self, config: dict, dirty: bool = True):
+        """Make a loaded config the live one: stop animations, rebind state, rebuild the layer list, repaint."""
+        self._stop_animation_playback()
+        self.config = config
+        self.layers = config["layers"]
+        self.animations = config["animations"]
+        self.active_layer = config["active_layer"]
+        if not hasattr(self, "layer_list"):  # startup: init_ui builds the list and grid from this state
+            return
+        self.layer_list.clear()
+        self.layer_list.addItems(list(self.layers.keys()))
+        self._select_active_layer_row()
+        self.update_grid()
+        if dirty:
             self.mark_dirty()
 
     def show_help(self):
@@ -1071,8 +1052,7 @@ class MainWindow(QMainWindow):
         if not fname:
             return
         try:
-            with open(fname, "w", encoding="utf-8") as f:
-                yaml.dump(self.animations, f, sort_keys=False)
+            config_store.export_file(self.animations, fname)
             QMessageBox.information(self, "Animations", f"Exported animations to {fname}")
         except Exception as e:
             QMessageBox.warning(self, "Animations", f"Failed to export: {e}")
@@ -1082,10 +1062,7 @@ class MainWindow(QMainWindow):
         if not fname:
             return
         try:
-            with open(fname, "r", encoding="utf-8") as f:
-                data = yaml.safe_load(f) or {}
-            if not isinstance(data, dict):
-                raise ValueError("Invalid animations file format")
+            data = config_store.read_mapping(fname)
             # Merge or overwrite? We'll merge keys and overwrite conflicts
             self.animations.update(data)
             # Refresh animations list in UI
@@ -1173,12 +1150,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Layer", "Layer already exists.")
             return
         # Initialize with default navigation buttons (same colors as main layer spec)
-        self.layers[layer_name] = {
-            "pads": {
-                "2,-1": {"type": "layer nav", "nav": "prev", "color": "#2980b9"},
-                "3,-1": {"type": "layer nav", "nav": "next", "color": "#8e44ad"},
-            }
-        }
+        self.layers[layer_name] = {"pads": config_store.default_nav_pads()}
         self.layer_list.addItem(layer_name)
         row = self.layer_list.count() - 1
         # Triggers switch_layer (via currentTextChanged), which sets active_layer and repaints
@@ -1293,53 +1265,6 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Launchpad connected", 5000)
         self.sync_pad_lights()
 
-    # --- Config / persistence helpers ---
-    def _load_config_on_startup(self) -> bool:
-        """Load config.yaml. Returns True if a saved config was loaded."""
-        if not CONFIG_PATH.exists():
-            return False
-        try:
-            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-                data = yaml.safe_load(f) or {}
-            if not isinstance(data, dict):
-                raise ValueError("config root is not a mapping")
-        except Exception:
-            # Keep the unreadable file: the next autosave would otherwise overwrite it
-            try:
-                shutil.copyfile(CONFIG_PATH, CONFIG_PATH.with_name("config.yaml.corrupt"))
-            except Exception:
-                pass
-            return False
-        self.config = data
-        self.active_layer = self.config.get("active_layer", "main")
-        self.layers = self.config.get("layers", {}) or {"main": {"pads": {}}}
-        self.animations = self.config.get("animations", {}) or {}
-        if self.active_layer not in self.layers:  # e.g. '' saved by an older build
-            self.active_layer = next(iter(self.layers))
-        return True
-
-    def _normalize_all_mappings(self):
-        def legacy_to_space(t: str) -> str:
-            return {"layer_nav": "layer nav", "switch_layer": "switch layer", "run_process": "run process"}.get(t, t)
-
-        changed = False
-        for layer_data in self.layers.values():
-            pads = layer_data.get("pads", {}) if isinstance(layer_data, dict) else {}
-            for mapping in list(pads.values()):
-                if not isinstance(mapping, dict):
-                    continue
-                t = mapping.get("type")
-                if isinstance(t, str):
-                    t2 = legacy_to_space(t)
-                    if t2 == "color only":
-                        t2 = "color"
-                    if t2 != t:
-                        mapping["type"] = t2
-                        changed = True
-        # Don't mark dirty during early initialization
-        if changed and getattr(self, "_ready", False):
-            self.mark_dirty()
-
     def mark_dirty(self):
         self._dirty = True
         if self._save_debounce_timer is None:
@@ -1350,11 +1275,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         # Minimize-to-tray behavior if enabled
-        try:
-            ui = self.config.get('ui', {}) if isinstance(self.config, dict) else {}
-            minimize_to_tray = bool(ui.get('minimize_to_tray', False))
-        except Exception:
-            minimize_to_tray = False
+        minimize_to_tray = bool(config_store.ui_settings(self.config).get('minimize_to_tray', False))
         if minimize_to_tray and not getattr(self, '_force_quit', False):
             event.ignore()
             self.hide()
@@ -1367,20 +1288,14 @@ class MainWindow(QMainWindow):
                     pass
             # Persist hidden state quickly
             try:
-                ui = self.config.get('ui', {}) if isinstance(self.config, dict) else {}
-                if isinstance(ui, dict):
-                    ui['start_hidden'] = True
-                    self.config['ui'] = ui
+                config_store.ui_settings(self.config)['start_hidden'] = True
                 self.save_config(silent=True)
             except Exception:
                 pass
             return
         # Normal close path
         try:
-            ui = self.config.get('ui', {}) if isinstance(self.config, dict) else {}
-            if isinstance(ui, dict):
-                ui['start_hidden'] = False
-                self.config['ui'] = ui
+            config_store.ui_settings(self.config)['start_hidden'] = False
             self.save_config(silent=True)
         except Exception:
             pass
@@ -1432,11 +1347,8 @@ class MainWindow(QMainWindow):
         self.activateWindow()
         # Ensure next start isn't forced hidden just because we opened it
         try:
-            ui = self.config.get('ui', {}) if isinstance(self.config, dict) else {}
-            if isinstance(ui, dict):
-                ui['start_hidden'] = False
-                self.config['ui'] = ui
-                self.save_config(silent=True)
+            config_store.ui_settings(self.config)['start_hidden'] = False
+            self.save_config(silent=True)
         except Exception:
             pass
 
@@ -1453,17 +1365,11 @@ class MainWindow(QMainWindow):
 
     # --- Settings dialog integration ---
     def _open_settings(self):
-        try:
-            ui_cfg = self.config.get('ui', {}) if isinstance(self.config, dict) else {}
-        except Exception:
-            ui_cfg = {}
-        dlg = SettingsPopup(ui_cfg, getattr(sys, 'frozen', False), parent=self)
+        dlg = SettingsPopup(config_store.ui_settings(self.config), getattr(sys, 'frozen', False), parent=self)
         if dlg.exec() == QDialog.Accepted:
             res = dlg.get_result()
             try:
-                ui = self.config.get('ui', {}) if isinstance(self.config, dict) else {}
-                if not isinstance(ui, dict):
-                    ui = {}
+                ui = config_store.ui_settings(self.config)
                 mode = (res.get('start_mode') or 'normal').lower()
                 if mode not in ('normal', 'minimized', 'hidden'):
                     mode = 'normal'
@@ -1472,7 +1378,6 @@ class MainWindow(QMainWindow):
                 ui['minimize_to_tray'] = bool(res.get('minimize_to_tray'))
                 ui['autostart_enabled'] = bool(res.get('autostart_enabled'))
                 ui['start_hidden'] = (mode == 'hidden') and bool(res.get('autostart_enabled'))
-                self.config['ui'] = ui
                 # Update Windows autostart
                 if sys.platform == 'win32':
                     ok = self._update_autostart_registry(ui['autostart_enabled'])
@@ -1530,69 +1435,12 @@ class MainWindow(QMainWindow):
         except Exception:
             return False
 
-    # --- Presets management ---
-    def ensure_presets_dir(self):
-        PRESETS_DIR.mkdir(parents=True, exist_ok=True)
-        # One-time copy of packaged default presets into AppData if missing.
-        # Use a sentinel file to avoid re-populating after user deletes defaults.
-        marker = PRESETS_DIR / '.migrated'
-        if not marker.exists():
-            try:
-                src_dirs: list[Path] = []
-                # Dev tree
-                src_dirs.append(PROJECT_ROOT / 'presets')
-                # Beside this module
-                try:
-                    src_dirs.append(Path(__file__).resolve().parent.parent / 'presets')
-                except Exception:
-                    pass
-                # Frozen onedir: alongside executable or under _internal
-                try:
-                    exe_dir = Path(sys.executable).resolve().parent
-                    src_dirs.append(exe_dir / 'presets')
-                    src_dirs.append(exe_dir / '_internal' / 'presets')
-                except Exception:
-                    pass
-                # Copy any *.yaml that don't already exist in AppData presets
-                for d in src_dirs:
-                    if not d or not d.exists():
-                        continue
-                    for yml in d.glob('*.yaml'):
-                        dest = PRESETS_DIR / yml.name
-                        if not dest.exists():
-                            try:
-                                shutil.copy2(str(yml), str(dest))
-                            except Exception:
-                                pass
-                # Write sentinel
-                try:
-                    marker.write_text('migrated', encoding='utf-8')
-                except Exception:
-                    pass
-            except Exception:
-                pass
-
-    def create_initial_preset_if_missing(self):
-        empty = PRESETS_DIR / "empty.yaml"
-        if not empty.exists():
-            sample = {
-                "layer": "main",
-                "pads": {
-                    "2,-1": {"type": "layer nav", "nav": "prev", "color": "#2980b9"},
-                    "3,-1": {"type": "layer nav", "nav": "next", "color": "#8e44ad"},
-                },
-                "animations": {},
-            }
-            with open(empty, "w", encoding="utf-8") as f:
-                yaml.dump(sample, f, sort_keys=False)
-
     # ---- Presets System (menu-based) ----
     def _rebuild_presets_menu(self):
         self.presets_menu.clear()
-        presets = sorted(PRESETS_DIR.glob("*.yaml"))
+        presets = self.store.list_presets()
         if presets:
-            for p in presets:
-                name = p.stem
+            for name in presets:
                 act = self.presets_menu.addAction(name, lambda n=name: self.load_preset(n))
                 if name == self.current_preset_name:
                     font = act.font()
@@ -1613,65 +1461,46 @@ class MainWindow(QMainWindow):
         name, ok = QInputDialog.getText(self, "New Preset", "Preset name:")
         if not ok or not name.strip():
             return
-        safe = self._sanitize_name(name)
-        path = PRESETS_DIR / f"{safe}.yaml"
-        if path.exists():
+        safe = config_store.sanitize_name(name)
+        if not safe:
+            QMessageBox.warning(self, "Preset", "Invalid name.")
+            return
+        if self.store.has_preset(safe):
             QMessageBox.warning(self, "Preset", "Preset already exists.")
             return
         # Start from blank current layer (preserving other layers)
         if self.active_layer not in self.layers:
             self.layers[self.active_layer] = {"pads": {}}
-        # Keep navigation pads if already present, otherwise seed them
-        pads = self.layers[self.active_layer].get("pads", {})
-        for nav_def in (
-            ("2,-1", {"type": "layer nav", "nav": "prev", "color": "#2980b9"}),
-            ("3,-1", {"type": "layer nav", "nav": "next", "color": "#8e44ad"}),
-        ):
-            pads.setdefault(nav_def[0], nav_def[1])
-        # Clear all other pads for this layer only
-        for k in list(pads.keys()):
-            if k not in ("2,-1", "3,-1"):
-                pads.pop(k)
-        self.layers[self.active_layer]["pads"] = pads
+        # Keep navigation pads if already present, otherwise seed them; clear all other pads for this layer only
+        old = self.layers[self.active_layer].get("pads", {})
+        self.layers[self.active_layer]["pads"] = {k: old.get(k, v) for k, v in config_store.default_nav_pads().items()}
         self.update_grid()
         self.current_preset_name = safe
-        self._write_preset_file(path)
-        self.statusBar().showMessage(f"Created preset '{safe}'", 4000)
+        if self._write_current_preset():
+            self.statusBar().showMessage(f"Created preset '{safe}'", 4000)
 
-    def _sanitize_name(self, name: str) -> str:
-        return "".join(c for c in name if c.isalnum() or c in ('-', '_')).strip()
-
-    def _write_preset_file(self, path: Path):
-        # Layer-scoped preset file; store pads for the active layer and embed referenced animations
+    def _write_current_preset(self) -> bool:
+        """Save the active layer's pads as preset current_preset_name; warn and return False on failure."""
         pads = self.layers.get(self.active_layer, {}).get("pads", {})
-        referenced = set()
-        for m in pads.values():
-            if isinstance(m, dict) and m.get("type") == "animation":
-                name = m.get("name")
-                if name:
-                    referenced.add(name)
-        anims = {k: v for k, v in self.animations.items() if k in referenced}
-        data = {
-            "layer": self.active_layer,
-            "pads": pads,
-            "animations": anims,
-        }
-        with open(path, "w", encoding="utf-8") as f:
-            yaml.dump(data, f, sort_keys=False)
+        try:
+            self.store.write_preset(self.current_preset_name, self.active_layer, pads, self.animations)
+        except Exception as e:
+            QMessageBox.warning(self, "Preset", f"Failed to save preset: {e}")
+            return False
+        return True
 
     def save_current_preset(self):
         if not self.current_preset_name:
             self.save_current_preset_as()
             return
-        path = PRESETS_DIR / f"{self.current_preset_name}.yaml"
-        self._write_preset_file(path)
-        self.statusBar().showMessage(f"Saved layer preset '{self.current_preset_name}'", 4000)
+        if self._write_current_preset():
+            self.statusBar().showMessage(f"Saved layer preset '{self.current_preset_name}'", 4000)
 
     def save_current_preset_as(self):
         name, ok = QInputDialog.getText(self, "Save Preset As", "Preset name:")
         if not ok or not name.strip():
             return
-        safe = self._sanitize_name(name)
+        safe = config_store.sanitize_name(name)
         if not safe:
             QMessageBox.warning(self, "Preset", "Invalid name.")
             return
@@ -1683,8 +1512,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Preset", "No preset loaded.")
             return
         # Enforce at least one preset existing
-        existing = list(PRESETS_DIR.glob("*.yaml"))
-        if len(existing) <= 1:
+        if len(self.store.list_presets()) <= 1:
             QMessageBox.warning(self, "Preset", "Cannot delete the last remaining preset.")
             return
         reply = QMessageBox.question(
@@ -1695,134 +1523,66 @@ class MainWindow(QMainWindow):
         )
         if reply != QMessageBox.Yes:
             return
-        path = PRESETS_DIR / f"{self.current_preset_name}.yaml"
         try:
-            if path.exists():
-                path.unlink()
+            self.store.delete_preset(self.current_preset_name)
         except Exception as e:
             QMessageBox.warning(self, "Preset", f"Could not delete: {e}")
             return
         deleted = self.current_preset_name
         self.current_preset_name = None
-        remaining = sorted(p.stem for p in PRESETS_DIR.glob("*.yaml"))
-        target = None
+        remaining = self.store.list_presets()
+        self.statusBar().showMessage(f"Layer preset '{deleted}' deleted", 4000)
         if remaining:
             prevs = [n for n in remaining if n < deleted]
-            target = prevs[-1] if prevs else remaining[0]
-        elif (PRESETS_DIR / "empty.yaml").exists():
-            target = "empty"
-        self.statusBar().showMessage(f"Layer preset '{deleted}' deleted", 4000)
-        if target:
-            self.load_preset(target)
+            self.load_preset(prevs[-1] if prevs else remaining[0])
         else:
-            self._apply_default_config()
+            self._apply_config(config_store.default_config(), dirty=False)
 
     def import_preset_file(self):
-        fname, _ = QFileDialog.getOpenFileName(self, "Import Preset", str(PRESETS_DIR), "YAML Files (*.yaml)")
-        if not fname:
+        fname, _ = QFileDialog.getOpenFileName(
+            self, "Import Preset", str(self.store.presets_dir), "YAML Files (*.yaml)"
+        )
+        if not fname or not Path(fname).exists():
             return
-        src = Path(fname)
-        if not src.exists():
-            return
-        base = src.stem
-        safe = self._sanitize_name(base) or "imported_preset"
-        dest = PRESETS_DIR / f"{safe}.yaml"
-        # Avoid overwrite silently
-        i = 1
-        while dest.exists():
-            dest = PRESETS_DIR / f"{safe}_{i}.yaml"
-            i += 1
         try:
-            with open(src, "r", encoding="utf-8") as f:
-                data = yaml.safe_load(f) or {}
-            with open(dest, "w", encoding="utf-8") as f:
-                yaml.dump(data, f, sort_keys=False)
+            name = self.store.import_preset(fname)
         except Exception as e:
-            QMessageBox.warning(self, "Import", f"Failed to import: {e}")
+            QMessageBox.warning(self, "Import", str(e))
             return
-        self.load_preset(dest.stem)
-        self.statusBar().showMessage(f"Imported layer preset '{dest.stem}'", 4000)
+        self.load_preset(name)
+        self.statusBar().showMessage(f"Imported layer preset '{name}'", 4000)
 
     def load_preset(self, name: str):
         """Load a layer-scoped preset: replace only current layer's pads.
 
-        Security: Validates path is within PRESETS_DIR to prevent path traversal.
+        The store rejects names that resolve outside the presets dir (path traversal).
         """
-        path = PRESETS_DIR / f"{name}.yaml"
-        # Security: Validate path is within allowed directory
-        if not _is_safe_path(PRESETS_DIR, path):
-            QMessageBox.warning(self, "Security Error", "Invalid preset path.")
+        try:
+            preset = self.store.read_preset(name, current_layer=self.active_layer)
+        except UnsafePresetName as e:
+            QMessageBox.warning(self, "Security Error", str(e))
             return
-        if not path.exists():
-            QMessageBox.warning(self, "Preset", "Preset file missing.")
+        except PresetError as e:
+            QMessageBox.warning(self, "Preset", str(e))
             return
         self._stop_animation_playback()
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = yaml.safe_load(f) or {}
-        except Exception as e:
-            QMessageBox.warning(self, "Preset", f"Failed to load: {e}")
-            return
-        # Backward compatibility: old full-config style
-        if "layers" in data:
-            active = data.get("active_layer", self.active_layer)
-            layers = data.get("layers", {})
-            pads = layers.get(active, {}).get("pads", {})
-        else:
-            pads = data.get("pads", {})
-            # Merge embedded animations (if present) into global animations set
-            emb = data.get("animations", {})
-            if isinstance(emb, dict):
-                self.animations.update(emb)
+        # Merge embedded animations (if present) into global animations set
+        self.animations.update(preset.animations)
         if self.active_layer not in self.layers:
             self.layers[self.active_layer] = {"pads": {}}
-        # Preserve navigation buttons if missing
-        nav_prev = self.layers[self.active_layer]["pads"].get(
-            "2,-1", {"type": "layer nav", "nav": "prev", "color": "#2980b9"}
-        )
-        nav_next = self.layers[self.active_layer]["pads"].get(
-            "3,-1", {"type": "layer nav", "nav": "next", "color": "#8e44ad"}
-        )
-        self.layers[self.active_layer]["pads"] = {**pads}
-        self.layers[self.active_layer]["pads"].setdefault("2,-1", nav_prev)
-        self.layers[self.active_layer]["pads"].setdefault("3,-1", nav_next)
-        # Presets may hold legacy type names (e.g. shipped empty.yaml uses 'layer_nav')
-        self._normalize_all_mappings()
+        # Preserve navigation buttons if the preset lacks them
+        old = self.layers[self.active_layer]["pads"]
+        pads = {**preset.pads}
+        for key, nav in config_store.default_nav_pads().items():
+            pads.setdefault(key, old.get(key, nav))
+        self.layers[self.active_layer]["pads"] = pads
         self.current_preset_name = name
         # Persist last_preset in config ui section for auto-load on next start
-        try:
-            ui = self.config.get('ui', {}) if isinstance(self.config, dict) else {}
-            if not isinstance(ui, dict):
-                ui = {}
-            ui['last_preset'] = name
-            self.config['ui'] = ui
-            self.save_config(silent=True)
-        except Exception:
-            pass
+        config_store.ui_settings(self.config)['last_preset'] = name
+        self.save_config(silent=True)
         # Repaints every pad, so no lights linger from the previous preset
         self.update_grid()
         self.statusBar().showMessage(f"Loaded layer preset '{name}'", 4000)
-
-    def _apply_default_config(self):
-        self.config = {
-            "active_layer": "main",
-            "layers": {
-                "main": {
-                    "pads": {
-                        "2,-1": {"type": "layer nav", "nav": "prev", "color": "#2980b9"},
-                        "3,-1": {"type": "layer nav", "nav": "next", "color": "#8e44ad"},
-                    }
-                }
-            },
-            "animations": {},
-        }
-        self.active_layer = "main"
-        self.layers = self.config["layers"]
-        self.animations = self.config.get("animations", {})
-        self.layer_list.clear()
-        self.layer_list.addItems(["main"])
-        self._select_active_layer_row()
-        self.update_grid()
 
     # load_selected_preset deprecated (use load_preset via menu)
 
@@ -2035,9 +1795,7 @@ class MainWindow(QMainWindow):
         self.config["animations"] = self.animations
         # Ensure UI section exists; keep custom fields
         try:
-            ui = self.config.get('ui', {}) if isinstance(self.config, dict) else {}
-            if not isinstance(ui, dict):
-                ui = {}
+            ui = config_store.ui_settings(self.config)
             # Maintain start_mode preference; derive start_hidden for backward compatibility
             ui.setdefault('start_mode', 'normal')
             # isHidden() is True during construction, before the window is first shown
@@ -2050,41 +1808,18 @@ class MainWindow(QMainWindow):
             ui.setdefault('autostart_enabled', ui.get('autostart_enabled', False))
             # last_preset may already be set elsewhere
             ui.setdefault('last_preset', ui.get('last_preset'))
-            self.config['ui'] = ui
         except Exception:
             pass
         try:
-            with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-                yaml.dump(self.config, f, sort_keys=False)
+            self.store.save(self.config)
             self._dirty = False
             if not silent:
-                QMessageBox.information(self, "Saved", f"Config saved to {CONFIG_PATH}")
+                QMessageBox.information(self, "Saved", f"Config saved to {self.store.config_path}")
         except Exception as e:
             if not silent:
                 QMessageBox.warning(self, "Save", f"Failed to save config: {e}")
             else:
                 self.statusBar().showMessage(f"Autosave failed: {e}", 8000)
-
-    def load_config(self):
-        if CONFIG_PATH.exists():
-            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-                return yaml.safe_load(f) or {}
-        return {"active_layer": "main", "layers": {"main": {"pads": {}}}}
-
-    def load_config_dialog(self):
-        fname, _ = QFileDialog.getOpenFileName(self, "Load Config", str(CONFIG_PATH), "YAML Files (*.yaml)")
-        if fname:
-            with open(fname, "r", encoding="utf-8") as f:
-                self.config = yaml.safe_load(f) or {}
-            self.active_layer = self.config.get("active_layer", "main")
-            self.layers = self.config.get("layers", {})
-            self.animations = self.config.get("animations", {})
-            self.layer_list.clear()
-            self.layer_list.addItems(list(self.layers.keys()))
-            self._select_active_layer_row()
-            self.update_grid()
-            self._normalize_all_mappings()
-            self.mark_dirty()
 
     # Duplicate init_ui removed to ensure control buttons (top & side) are displayed.
 
@@ -2143,13 +1878,8 @@ def main():
             pass
     saved_mode = 'normal'
     try:
-        if CONFIG_PATH.exists():
-            with open(CONFIG_PATH, 'r', encoding='utf-8') as _cf:
-                _cfg = yaml.safe_load(_cf) or {}
-            if isinstance(_cfg, dict):
-                ui = _cfg.get('ui') or {}
-                if isinstance(ui, dict):
-                    saved_mode = ui.get('start_mode') or ('hidden' if ui.get('start_hidden') else 'normal')
+        ui = config_store.ui_settings(ConfigStore(APPDATA_DIR).load().config)
+        saved_mode = ui.get('start_mode') or ('hidden' if ui.get('start_hidden') else 'normal')
     except Exception:
         pass
     if cli_hidden:
@@ -2251,9 +1981,7 @@ def main():
     if preset_to_load:
         try:
             # Only load if file exists to avoid warning popups on silent background start
-
-            preset_path = PRESETS_DIR / f"{preset_to_load}.yaml"
-            if preset_path.exists():
+            if win.store.has_preset(preset_to_load):
                 win.load_preset(preset_to_load)
         except Exception:
             pass

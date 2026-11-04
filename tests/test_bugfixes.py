@@ -63,7 +63,8 @@ def test_layer_order_survives_save(make_win, lpm):
 def test_failed_save_stays_dirty(make_win, lpm, monkeypatch):
     win = make_win()
     win._dirty = True
-    monkeypatch.setattr(lpm, "CONFIG_PATH", lpm.APPDATA_DIR / "missing-dir" / "config.yaml")
+    lpm.CONFIG_PATH.unlink(missing_ok=True)
+    lpm.CONFIG_PATH.mkdir()  # a directory in the file's place: the write can't land
     win.save_config(silent=True)
     assert win._dirty
 
