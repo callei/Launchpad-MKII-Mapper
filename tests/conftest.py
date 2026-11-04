@@ -35,6 +35,34 @@ class FakeController:
         self.colors.append((pad, rgb))
 
 
+class FakeOsAdapter:
+    """Stands in for actions.SystemAdapter: records process launches and key events instead of doing them."""
+
+    def __init__(self, char_keys=None, fail=None):
+        self.calls = []  # ("spawn", cmd, quiet) / ("open", path, args) / ("down", vk) / ("up", vk)
+        self.char_keys = char_keys or {}  # char -> VK codes, like the active keyboard layout
+        self.fail = fail  # exception raised by spawn/open_file
+
+    def spawn(self, cmd, quiet):
+        self.calls.append(("spawn", cmd, quiet))
+        if self.fail:
+            raise self.fail
+
+    def open_file(self, path, args):
+        self.calls.append(("open", path, args))
+        if self.fail:
+            raise self.fail
+
+    def key_down(self, vk):
+        self.calls.append(("down", vk))
+
+    def key_up(self, vk):
+        self.calls.append(("up", vk))
+
+    def char_vks(self, ch):
+        return self.char_keys.get(ch)
+
+
 @pytest.fixture(scope="session")
 def qapp():
     from PySide6.QtWidgets import QApplication
@@ -47,6 +75,7 @@ def lpm(monkeypatch):
     import launchpad_mapper
 
     monkeypatch.setattr(launchpad_mapper, "LaunchpadController", FakeController)
+    monkeypatch.setattr(launchpad_mapper, "SystemAdapter", FakeOsAdapter)
     return launchpad_mapper
 
 

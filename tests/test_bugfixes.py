@@ -152,8 +152,6 @@ def test_editing_animation_pad_without_iterations_stays_single_run(make_win):
 def test_hand_edited_numbers_do_not_break_pad_press(make_win, monkeypatch):
     win = make_win()
     clock = _fake_clock(win, monkeypatch)
-    calls = []
-    monkeypatch.setattr(win, "_perform_media_control", lambda act, steps: calls.append((act, steps)))
     win.animations["blink"] = {"frames": [{"duration": 10, "pads": {"0,0": "#ff0000"}}]}
     pads = win.layers[win.active_layer]["pads"]
     pads["0,0"] = {"type": "animation", "name": "blink", "iterations": "twice"}
@@ -164,4 +162,4 @@ def test_hand_edited_numbers_do_not_break_pad_press(make_win, monkeypatch):
     clock[0] = 10
     win._animate()
     assert win.anim.running == []  # "twice" fell back to a single cycle
-    assert calls == [("mute", 1)]
+    assert win.action_runner.adapter.calls == [("down", 0xAD), ("up", 0xAD)]  # "lots" fell back to one step

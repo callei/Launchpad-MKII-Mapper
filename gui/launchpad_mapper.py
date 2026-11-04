@@ -1,7 +1,5 @@
 import sys
-import subprocess
 import os
-import shlex
 from pathlib import Path
 from PySide6.QtWidgets import (
     QApplication,
@@ -20,12 +18,11 @@ from PySide6.QtWidgets import (
     QTabWidget,
     QSpinBox,
 )
-from PySide6.QtCore import Qt, Signal, Slot, QPoint, QTimer, QThread
+from PySide6.QtCore import Qt, Signal, Slot, QPoint, QTimer
 from PySide6.QtGui import QPalette, QColor, QFont, QFontDatabase, QPainter, QPen, QIcon, QAction
 from PySide6.QtWidgets import QProxyStyle, QStyle, QStyleFactory, QSystemTrayIcon, QMenu
 from PySide6.QtWidgets import QGraphicsDropShadowEffect
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
-import re
 import math
 import time
 import traceback
@@ -96,6 +93,7 @@ from launchpad.mapping import PadMapping, pad_key, parse_pad_key  # noqa: E402
 from launchpad.animation import AnimationEngine, Tick  # noqa: E402
 from launchpad.leds import LedPainter  # noqa: E402
 from launchpad.layers import LayerSet  # noqa: E402
+from launchpad.actions import ActionRunner, SystemAdapter  # noqa: E402
 
 # AppData configuration location (Windows). Fallback: project root.
 APPDATA_DIR = Path(os.environ.get("APPDATA", Path.home())) / "LaunchpadMapper"
@@ -137,6 +135,8 @@ class MainWindow(QMainWindow):
         self.current_preset_name = None  # Track which preset is currently loaded
         # Layers and the active layer; init_ui subscribes the list widget and grid to its changes
         self.layer_set = LayerSet()
+        # OS actions (launch/run/hotkey/media); later chords of a hotkey sequence are timed by the event loop
+        self.action_runner = ActionRunner(SystemAdapter(), defer=QTimer.singleShot)
         self.lp = None
         # Internal dirty tracking for debounced autosave
         self._dirty = False
@@ -1314,36 +1314,18 @@ class MainWindow(QMainWindow):
             if anim_name and anim_name in self.animations:
                 # 0=infinite (a press while it loops stops it), 1=single cycle
                 self._play_animation(anim_name, mapping.iterations)
-        elif mapping.type == padmap.LAUNCH_APP:
-            path = mapping.path
-            args = mapping.args
-            if path:
-                try:
-                    self._launch_app_silent(path, args=args)
-                except Exception as e:
-                    QMessageBox.warning(self, "Launch App", f"Failed to launch: {e}")
-        elif mapping.type == padmap.RUN_PROCESS:
-            cmd = mapping.command
-            if cmd:
-                try:
-                    # Security: shell=False, so no shell interprets the command
-                    if sys.platform == 'win32':
-                        # Windows parses the command line itself; splitting first broke quoted paths
-                        subprocess.Popen(cmd, shell=False)
-                    else:
-                        subprocess.Popen(shlex.split(cmd), shell=False)
-                except Exception as e:
-                    QMessageBox.warning(self, "Run Process", f"Failed: {e}")
-        elif mapping.type == padmap.HOTKEY:
-            keys = mapping.keys
-            if keys:
-                self._perform_hotkey(keys)
-        elif mapping.type == padmap.MEDIA_CONTROL:
-            act = mapping.action
-            steps = 1 if mapping.steps is None else mapping.steps
-            if act:
-                self._perform_media_control(act, steps)
+        else:
+            result = self.action_runner.run(mapping)
+            if not result.ok:
+                self._report_action_error(result.error)
         self.animate_pad_press(x, y)
+
+    def _report_action_error(self, message: str):
+        # No modal dialog: the app often lives in the tray, and a nested event loop let presses re-enter
+        self.statusBar().showMessage(message, 5000)
+        tray = getattr(self, 'tray', None)
+        if tray is not None and not self.isVisible():
+            tray.showMessage("Launchpad Mapper", message, QSystemTrayIcon.Warning, 5000)
 
     def on_pad_release(self, pad):
         self.animate_pad_release(pad[0], pad[1])
@@ -1379,37 +1361,6 @@ class MainWindow(QMainWindow):
             self.update_grid()
             if self._ready:
                 self.mark_dirty()
-
-    def _launch_app_silent(self, path: str, args: str = ""):
-        """Launch an app with optional arguments without opening a console window.
-
-        Security: Validates path exists and uses shell=False to prevent command injection.
-        """
-        # Security: Validate that the path exists and is a file
-        if not os.path.isfile(path):
-            raise FileNotFoundError(f"Application not found: {path}")
-
-        if sys.platform == 'win32' and Path(path).suffix.lower() not in ('.exe', '.com', '.bat', '.cmd'):
-            # Documents, shortcuts (.lnk/.url) etc. can't be executed; open them with their default app
-            if args:
-                os.startfile(path, arguments=args)
-            else:
-                os.startfile(path)
-            return
-
-        # Use subprocess.DEVNULL for automatic resource management
-        kwargs = {'stdout': subprocess.DEVNULL, 'stderr': subprocess.DEVNULL}
-        if sys.platform == 'win32':
-            CREATE_NO_WINDOW = 0x08000000
-            si = subprocess.STARTUPINFO()
-            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            kwargs['startupinfo'] = si
-            kwargs['creationflags'] = CREATE_NO_WINDOW
-            # Pass args through verbatim; splitting them kept quote characters that then got escaped
-            cmd = subprocess.list2cmdline([path]) if not args else f'{subprocess.list2cmdline([path])} {args}'
-        else:
-            cmd = [path, *shlex.split(args)]
-        subprocess.Popen(cmd, shell=False, **kwargs)
 
     def update_grid(self):
         """Show the active layer's colors (intensity applied) on screen and repaint every Launchpad pad."""
@@ -1690,168 +1641,6 @@ def main():
         _debug_log(''.join(traceback.format_exception(e)))
         raise
 
-
-# ---- System-level helpers (Windows specific for media / hotkeys) ----
-if sys.platform == 'win32':
-    import ctypes
-
-    user32 = ctypes.WinDLL('user32', use_last_error=True)
-    user32.VkKeyScanW.argtypes = [ctypes.c_wchar]
-    user32.VkKeyScanW.restype = ctypes.c_short  # SHORT; -1 = no key for this char
-    KEYEVENTF_KEYUP = 0x0002
-    VK_MEDIA_NEXT_TRACK = 0xB0
-    VK_MEDIA_PREV_TRACK = 0xB1
-    VK_MEDIA_PLAY_PAUSE = 0xB3
-    VK_VOLUME_MUTE = 0xAD
-    VK_VOLUME_DOWN = 0xAE
-    VK_VOLUME_UP = 0xAF
-
-    KEYEVENTF_EXTENDEDKEY = 0x0001
-    VK_SHIFT = 0x10
-
-    _SPECIAL_KEY_MAP = {
-        'ctrl': 0x11,
-        'control': 0x11,
-        'shift': 0x10,
-        'alt': 0x12,
-        'win': 0x5B,
-        'super': 0x5B,
-        'esc': 0x1B,
-        'escape': 0x1B,
-        'enter': 0x0D,
-        'return': 0x0D,
-        'tab': 0x09,
-        'space': 0x20,
-        'backspace': 0x08,
-        'delete': 0x2E,
-        'del': 0x2E,
-        'insert': 0x2D,
-        'ins': 0x2D,
-        'home': 0x24,
-        'end': 0x23,
-        'pageup': 0x21,
-        'pgup': 0x21,
-        'pagedown': 0x22,
-        'pgdn': 0x22,
-        'left': 0x25,
-        'up': 0x26,
-        'right': 0x27,
-        'down': 0x28,
-        'printscreen': 0x2C,
-        'prtsc': 0x2C,
-        'capslock': 0x14,
-        # '+' and ',' are syntax (chord / sequence separators), so they need names
-        'plus': 0xBB,
-        'comma': 0xBC,
-    }
-    # Keys that must be sent with KEYEVENTF_EXTENDEDKEY (otherwise e.g. arrows act as numpad keys)
-    _EXTENDED_VKS = {0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x2C, 0x2D, 0x2E, 0x5B} | set(range(0xAD, 0xB4))
-
-
-def _vks_for_token(tok: str):
-    """Return the virtual-key codes for one token (a char may need shift), or None if unknown."""
-    t = tok.lower().strip()
-    if sys.platform != 'win32' or not t:
-        return None
-    # Function keys F1-F24
-    if t.startswith('f') and t[1:].isdigit():
-        num = int(t[1:])
-        if 1 <= num <= 24:
-            return [0x70 + (num - 1)]  # VK_F1 = 0x70
-    if t in _SPECIAL_KEY_MAP:
-        return [_SPECIAL_KEY_MAP[t]]
-    if len(t) == 1:
-        if t.isascii() and t.isalnum():
-            return [ord(t.upper())]  # VK codes for A-Z / 0-9 equal their ASCII codes
-        # Punctuation: ask the active keyboard layout (ord() gave unrelated keys, e.g. '-' -> Insert)
-        res = user32.VkKeyScanW(t)
-        if res == -1 or res & 0xFF == 0xFF:
-            return None
-        return ([VK_SHIFT] if (res >> 8) & 1 else []) + [res & 0xFF]
-    return None
-
-
-def _parse_hotkey(combo: str):
-    """Parse 'ctrl+c>win+d' into chords of VK codes. Returns (chords, unknown_tokens).
-
-    A chord containing an unknown key is dropped entirely rather than pressed partially.
-    """
-    chords, unknown = [], []
-    for chord in re.split(r'[>,]', combo or ''):
-        parts = [p.strip() for p in chord.split('+') if p.strip()]
-        if not parts:
-            continue
-        vks, bad = [], [p for p in parts if _vks_for_token(p) is None]
-        if bad:
-            unknown.extend(bad)
-            continue
-        for part in parts:
-            for vk in _vks_for_token(part):
-                if vk not in vks:
-                    vks.append(vk)
-        chords.append(vks)
-    return chords, unknown
-
-
-def _send_vk_sequence(down_then_up):
-    if sys.platform != 'win32':
-        return
-    for vk in down_then_up:
-        flags = KEYEVENTF_EXTENDEDKEY if vk in _EXTENDED_VKS else 0
-        user32.keybd_event(vk, 0, flags, 0)
-    for vk in reversed(down_then_up):
-        flags = KEYEVENTF_EXTENDEDKEY if vk in _EXTENDED_VKS else 0
-        user32.keybd_event(vk, 0, flags | KEYEVENTF_KEYUP, 0)
-
-
-def MainWindow__perform_hotkey(self, combo: str):
-    """Execute a hotkey or a sequence of hotkey chords i.e. a macro!
-
-    # NOTE: If you want to allow advanced shell features (such as pipes, redirection, or shell built-ins),
-    # you must change the implementation to use shell=True and pass the command as a string to subprocess.
-    # Be aware that this introduces significant security risks (command injection).
-    # Only do this if you fully trust the source of the commands.
-
-    Syntax examples:
-      ctrl+shift+esc            (single chord)
-      win+d                     (single chord)
-      ctrl+c>win+d              (sequence of two chords executed in order)
-      f5                        (function key)
-      shift+f2>alt+f4           (sequence with function keys)
-
-    Chords are separated by '>' (or ','). Inside a chord, '+' joins simultaneous keys.
-    Use 'plus' / 'comma' for those keys. Ctrl+Alt+Del can't be sent by any program.
-    """
-    chords, unknown = _parse_hotkey(combo)
-    if unknown:
-        self.statusBar().showMessage(f"Hotkey: unknown key(s) {', '.join(unknown)}", 5000)
-    for vk_list in chords:
-        _send_vk_sequence(vk_list)
-        # Small delay between chords to mimic natural sequence timing
-        QThread.msleep(55)
-
-
-def MainWindow__perform_media_control(self, action: str, steps: int = 1):
-    if sys.platform != 'win32':
-        return
-    mapping = {
-        'next': VK_MEDIA_NEXT_TRACK,
-        'previous': VK_MEDIA_PREV_TRACK,
-        'play/pause': VK_MEDIA_PLAY_PAUSE,
-        'volume up': VK_VOLUME_UP,
-        'volume down': VK_VOLUME_DOWN,
-        'mute': VK_VOLUME_MUTE,
-    }
-    vk = mapping.get(action.lower())
-    if vk:
-        steps = max(1, min(25, int(steps)))
-        for _ in range(steps):
-            _send_vk_sequence([vk])
-
-
-# Monkey patch helper methods into class (avoid reorganizing large class body)
-MainWindow._perform_hotkey = MainWindow__perform_hotkey  # type: ignore
-MainWindow._perform_media_control = MainWindow__perform_media_control  # type: ignore
 
 if __name__ == "__main__":
     main()
