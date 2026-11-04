@@ -17,6 +17,9 @@ from typing import Callable, Protocol
 from launchpad import mapping as padmap
 from launchpad.mapping import PadMapping
 
+# A packaged (Microsoft Store) app: 'shell:AppsFolder\<PackageFamilyName>!<AppId>'. Strict on purpose:
+# it is handed to os.startfile, so nothing else (paths, other shell: folders) may pass.
+STORE_APP_PATH = re.compile(r'shell:AppsFolder\\[A-Za-z0-9._-]+![A-Za-z0-9._-]+', re.IGNORECASE)
 CHORD_GAP_MS = 55  # pause between the chords of a hotkey sequence, like natural typing
 MAX_MEDIA_STEPS = 25
 
@@ -221,6 +224,12 @@ class ActionRunner:
         path, args = m.path, m.args
         if not path:
             return ActionResult("Launch app: no application set")
+        if path.lower().startswith('shell:'):
+            # Microsoft Store apps have no exe to run; Windows starts them by app ID
+            if not STORE_APP_PATH.fullmatch(path):
+                return ActionResult(f"Not a valid Store app: {path}")
+            self.adapter.open_file(path, args)
+            return ActionResult()
         # Security: only launch files that exist
         if not os.path.isfile(path):
             return ActionResult(f"Application not found: {path}")

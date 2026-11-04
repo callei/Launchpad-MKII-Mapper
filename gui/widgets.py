@@ -24,6 +24,59 @@ from PySide6.QtCore import Qt, Signal, QPoint, QTimer, QThread
 from PySide6.QtGui import QColor, QPainterPath, QRegion
 
 from launchpad import mapping as padmap
+from launchpad.actions import STORE_APP_PATH
+from launchpad.hotkey_capture import HotkeyRecorder, KeyboardHook, layout_char
+
+
+class HotkeyEdit(QLineEdit):
+    """Shows a hotkey string; while focused, the keys you press are recorded instead of acted on.
+
+    The first chord pressed after focusing replaces the text, later ones extend it as a sequence
+    ('ctrl+c>win+d'). Without the Windows keyboard hook it falls back to typing the string.
+    """
+
+    _IDLE_HINT = "Click, then press the shortcut (e.g. Alt+Enter)"
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._recorder = HotkeyRecorder(layout_char)
+        self._hook = KeyboardHook(self._on_key)
+        self._fresh = True  # next chord replaces the text
+        self.setReadOnly(sys.platform == 'win32')
+        self.setPlaceholderText(self._IDLE_HINT)
+
+    @property
+    def capturing(self) -> bool:
+        return self._hook.active
+
+    def focusInEvent(self, event):
+        super().focusInEvent(event)
+        self._recorder.reset()
+        self._fresh = True
+        if self._hook.start():
+            self.setPlaceholderText("Press the shortcut…")
+            self.setStyleSheet("border: 1px solid #2980b9;")
+        else:
+            self.setReadOnly(False)  # no hook: type it as text
+
+    def focusOutEvent(self, event):
+        self._stop_capture()
+        super().focusOutEvent(event)
+
+    def hideEvent(self, event):
+        self._stop_capture()
+        super().hideEvent(event)
+
+    def _stop_capture(self):
+        self._hook.stop()
+        self.setPlaceholderText(self._IDLE_HINT)
+        self.setStyleSheet("")
+
+    def _on_key(self, vk: int, down: bool):
+        chord = self._recorder.key_event(vk, down)
+        if chord:
+            self.setText(chord if self._fresh or not self.text() else f"{self.text()}>{chord}")
+            self._fresh = False
 
 
 class PadButton(QPushButton):
@@ -361,6 +414,26 @@ class TextInputPopup(FramelessPopup):
         return "", False
 
 
+def _store_apps() -> list[tuple[str, str]]:
+    """(name, 'shell:AppsFolder\\<app id>') for the packaged (Store) apps in Windows' app list."""
+    try:
+        import win32com.client  # type: ignore
+
+        folder = win32com.client.Dispatch('Shell.Application').NameSpace('shell:AppsFolder')
+        apps = []
+        for item in folder.Items():
+            path = f"shell:AppsFolder\\{item.Path}"
+            if STORE_APP_PATH.fullmatch(path):  # packaged apps only; desktop apps come from shortcuts
+                apps.append((item.Name, path))
+        return apps
+    except Exception:
+        return []
+
+
+def _is_store_app(path: str) -> bool:
+    return bool(STORE_APP_PATH.fullmatch(path or ''))
+
+
 class _AppScanWorker(QThread):
     resultReady = Signal(list)
 
@@ -407,8 +480,10 @@ class _AppScanWorker(QThread):
                     dirs.append(d)
             # Optional .lnk resolution
             try:
+                import pythoncom  # type: ignore
                 import win32com.client  # type: ignore
 
+                pythoncom.CoInitialize()  # COM must be initialized on this worker thread
                 shell = win32com.client.Dispatch('WScript.Shell')
             except Exception:
                 shell = None
@@ -434,6 +509,16 @@ class _AppScanWorker(QThread):
                             args = ""
                     label = path.stem
                     add_entry(label, full, target, args if is_link else "", is_link)
+
+            # --- 1b. Microsoft Store apps: no .exe or shortcut to find; launched by app ID ---
+            if shell is not None:
+                known = {e[0].lower() for e in entries}
+                for label, path in _store_apps():
+                    if self._stop:
+                        return
+                    if label.lower() not in known:
+                        known.add(label.lower())
+                        entries.append((label, path, path, "", False))
 
             # --- 2. Registry Uninstall (Control Panel list) ---
             import winreg
@@ -605,6 +690,9 @@ class AppPickerDialog(QDialog):
             eff = target or full
             if not eff:
                 continue
+            if _is_store_app(eff):
+                cleaned.append((label, eff, ""))
+                continue
             if not (eff.lower().endswith('.exe') or eff.lower().endswith('.lnk')):
                 # Skip non-executable targets
                 continue
@@ -640,7 +728,7 @@ class AppPickerDialog(QDialog):
             else [
                 (lbl, (t or f) if (t or f) else f, (a or ""))
                 for (lbl, f, t, a, _is_link) in self._raw_entries
-                if (t or f) and (t or f).lower().endswith('.exe')
+                if (t or f) and ((t or f).lower().endswith('.exe') or _is_store_app(t or f))
             ]
         )
         if text:
@@ -705,11 +793,19 @@ class PadEditorDialog(FramelessPopup):
         self.launch_browse_btn.clicked.connect(self._browse_launch_app)
         self.launch_pick_btn.clicked.connect(self._pick_installed_app)
         # Hotkey edit
-        self.hotkey_label = QLabel("Hotkey (ex: ctrl+shift+esc eller sekvens: ctrl+c>win+d):")
-        self.hotkey_edit = QLineEdit()
-        self.hotkey_edit.setPlaceholderText("ctrl+shift+esc  |  win+d  |  ctrl+c>win+d")
+        self.hotkey_label = QLabel("Hotkey (press it; several presses make a sequence):")
+        self.hotkey_edit = HotkeyEdit()
+        self.hotkey_clear_btn = QPushButton("Clear")
+        self.hotkey_clear_btn.setFocusPolicy(Qt.NoFocus)  # clicking it must not end/restart a capture oddly
+        self.hotkey_clear_btn.clicked.connect(self.hotkey_edit.clear)
+        hotkey_row = QHBoxLayout()
+        hotkey_row.setContentsMargins(0, 0, 0, 0)
+        hotkey_row.addWidget(self.hotkey_edit, 1)
+        hotkey_row.addWidget(self.hotkey_clear_btn)
+        self.hotkey_row_w = QWidget()
+        self.hotkey_row_w.setLayout(hotkey_row)
         layout.addWidget(self.hotkey_label)
-        layout.addWidget(self.hotkey_edit)
+        layout.addWidget(self.hotkey_row_w)
         # Media control select
         self.media_label = QLabel("Media Control Action:")
         self.media_select = QComboBox()
@@ -777,7 +873,7 @@ class PadEditorDialog(FramelessPopup):
             self.launch_path,
             lrw,
             self.hotkey_label,
-            self.hotkey_edit,
+            self.hotkey_row_w,
             self.media_label,
             self.media_select,
             self.layer_label,
@@ -810,6 +906,7 @@ class PadEditorDialog(FramelessPopup):
         self.animation_loop_iterations.setValue(m.iterations)
         self.selected_color = m.color
         self.intensity_select.setCurrentText(m.intensity)
+        self._show_selected_color()
         # Hook type change
         self.action_type.currentTextChanged.connect(self._on_type_changed)
         # Ensure visibility consistent with current type
@@ -861,7 +958,7 @@ class PadEditorDialog(FramelessPopup):
             pass
         is_hotkey = text == padmap.HOTKEY
         self.hotkey_label.setVisible(is_hotkey)
-        self.hotkey_edit.setVisible(is_hotkey)
+        self.hotkey_row_w.setVisible(is_hotkey)
         is_media = text == padmap.MEDIA_CONTROL
         self.media_label.setVisible(is_media)
         self.media_select.setVisible(is_media)
@@ -907,6 +1004,22 @@ class PadEditorDialog(FramelessPopup):
                     self.intensity_select.setCurrentText(inten)
             except Exception:
                 pass
+            self._show_selected_color()
+
+    def _show_selected_color(self):
+        """Preview the chosen color (as the pad will show it) on the color button."""
+        rgb = padmap.color_rgb({"color": self.selected_color, "intensity": self.intensity_select.currentText()})
+        if rgb is None:
+            self.color_btn.setText("Pick Color (none)")
+            self.color_btn.setStyleSheet("")
+            return
+        r, g, b = rgb
+        fg = "#000" if (0.299 * r + 0.587 * g + 0.114 * b) > 140 else "#fff"
+        self.color_btn.setText(f"{self.selected_color}  ·  {self.intensity_select.currentText()}")
+        self.color_btn.setStyleSheet(
+            f"background-color: rgb({r},{g},{b}); color: {fg}; border: 1px solid #888;"
+            " border-radius: 4px; padding: 4px 10px;"
+        )
 
     def _browse_launch_app(self):
         path, _ = QFileDialog.getOpenFileName(self, "Select Application", str(Path.home()))

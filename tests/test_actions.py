@@ -203,3 +203,27 @@ def test_dev_autostart_uses_pythonw(win, lpm, monkeypatch):
     assert win._update_autostart_registry(True)
     cmd = written["LaunchpadMapper"]
     assert "pythonw.exe" in cmd.lower() and cmd.endswith("--autostart")
+
+
+SPOTIFY = r"shell:AppsFolder\SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify"
+
+
+def test_launch_store_app_opens_its_apps_folder_entry(runner, os_fake):
+    result = runner.run({"type": "launch app", "path": SPOTIFY, "args": ""})
+    assert result.ok
+    assert os_fake.calls == [("open", SPOTIFY, "")]
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        r"shell:AppsFolder\not-an-app-id",  # no '!'
+        r"shell:AppsFolder\..\..\Windows\System32\cmd.exe",
+        r"shell:AppsFolder\a!b c",
+        r"shell:Startup\evil!x",
+    ],
+)
+def test_launch_rejects_malformed_store_app_paths(runner, os_fake, path):
+    result = runner.run({"type": "launch app", "path": path})
+    assert not result.ok
+    assert os_fake.calls == []

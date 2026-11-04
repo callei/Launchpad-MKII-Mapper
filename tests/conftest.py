@@ -63,6 +63,28 @@ class FakeOsAdapter:
         return self.char_keys.get(ch)
 
 
+class FakeKeyboardHook:
+    """Stands in for hotkey_capture.KeyboardHook so tests never capture the real keyboard."""
+
+    def __init__(self, on_key):
+        self.on_key = on_key
+        self.active = False
+
+    def start(self):
+        self.active = True
+        return True
+
+    def stop(self):
+        self.active = False
+
+
+@pytest.fixture(autouse=True)
+def _no_real_keyboard_hook(monkeypatch):
+    import widgets
+
+    monkeypatch.setattr(widgets, "KeyboardHook", FakeKeyboardHook)
+
+
 @pytest.fixture(scope="session")
 def qapp():
     from PySide6.QtWidgets import QApplication
