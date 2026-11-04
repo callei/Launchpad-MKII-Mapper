@@ -77,28 +77,57 @@ def test_unreadable_config_is_kept_aside(make_win, lpm):
     assert backup.read_text(encoding="utf-8") == "layers: [unclosed"
 
 
-def test_editing_frames_during_playback_keeps_animations_working(make_win):
+def _fake_clock(win, monkeypatch):
+    clock = [0]
+    monkeypatch.setattr(win, "_now", lambda: clock[0])
+    return clock
+
+
+def test_editing_frames_during_playback_keeps_animations_working(make_win, monkeypatch):
     win = make_win()
+    clock = _fake_clock(win, monkeypatch)
     win.animations["blink"] = {
         "frames": [{"duration": 10, "pads": {"0,0": "#ff0000"}}, {"duration": 10, "pads": {"1,0": "#00ff00"}}]
     }
-    win._start_animation_playback("blink", 1)
-    win._anim_scheduler_tick()  # now on frame 2
+    win._play_animation("blink", 1)
+    clock[0] = 10
+    win._animate()  # now on frame 2
     win.animations["blink"]["frames"].pop()  # user deletes the frame being played
-    win._anim_scheduler_tick()
-    win._anim_scheduler_tick()
-    assert win._anim_runs == []
-    win._start_animation_playback("blink", 1)
-    assert len(win._anim_runs) == 1
+    clock[0] = 20
+    win._animate()
+    assert win.anim.running == []
+    assert not win._anim_timer.isActive()
+    win._play_animation("blink", 1)
+    assert win.anim.running == ["blink"]
 
 
-def test_malformed_frame_duration_stops_playback_cleanly(make_win):
+def test_malformed_frame_duration_stops_playback_cleanly(make_win, monkeypatch):
     win = make_win()
+    clock = _fake_clock(win, monkeypatch)
     win.animations["bad"] = {"frames": [{"duration": "soon", "pads": {"0,0": "#ff0000"}}]}
-    win._start_animation_playback("bad", 1)
-    win._anim_scheduler_tick()
-    win._anim_scheduler_tick()
-    assert not win._anim_timer_active
+    win._play_animation("bad", 1)
+    assert win._anim_timer.isActive()
+    clock[0] = 300  # the default frame length
+    win._animate()
+    assert win.anim.running == []
+    assert not win._anim_timer.isActive()
+
+
+def test_failing_tick_stops_playback(make_win):
+    win = make_win()
+    win.animations["blink"] = {"frames": [{"duration": 10, "pads": {"0,0": "#ff0000"}}]}
+    win._play_animation("blink", 0)
+
+    def boom(now):
+        raise RuntimeError("tick failed")
+
+    win.anim.advance = boom
+    win._animate()
+    del win.anim.advance
+    assert win.anim.running == []
+    assert not win._anim_timer.isActive()
+    win._play_animation("blink", 0)  # playback works again
+    assert win.anim.running == ["blink"]
 
 
 def _accept_next_dialog():
@@ -124,6 +153,7 @@ def test_editing_animation_pad_without_iterations_stays_single_run(make_win):
 
 def test_hand_edited_numbers_do_not_break_pad_press(make_win, monkeypatch):
     win = make_win()
+    clock = _fake_clock(win, monkeypatch)
     calls = []
     monkeypatch.setattr(win, "_perform_media_control", lambda act, steps: calls.append((act, steps)))
     win.animations["blink"] = {"frames": [{"duration": 10, "pads": {"0,0": "#ff0000"}}]}
@@ -132,5 +162,8 @@ def test_hand_edited_numbers_do_not_break_pad_press(make_win, monkeypatch):
     pads["1,0"] = {"type": "media control", "action": "mute", "steps": "lots"}
     win.on_pad_press((0, 0))
     win.on_pad_press((1, 0))
-    assert [r["iterations"] for r in win._anim_runs] == [1]
+    assert win.anim.running == ["blink"]
+    clock[0] = 10
+    win._animate()
+    assert win.anim.running == []  # "twice" fell back to a single cycle
     assert calls == [("mute", 1)]

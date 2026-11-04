@@ -26,13 +26,13 @@ def test_infinite_animation_pad_toggles(win):
     win.animations["blink"] = {"frames": [{"duration": 500, "pads": {"0,0": "#ff0000"}}]}
     win.layers[win.active_layer]["pads"]["1,1"] = {"type": "animation", "name": "blink", "iterations": 0}
     win.on_pad_press((1, 1))
-    assert [r["name"] for r in win._anim_runs] == ["blink"]
-    win._anim_scheduler_tick()  # light the frame
+    assert win.anim.running == ["blink"]
+    assert win.lp.colors[-1][0] == (0, 0) and win.lp.colors[-1][1] != (0, 0, 0)  # first frame lit right away
     win.on_pad_press((1, 1))
-    assert win._anim_runs == []
+    assert win.anim.running == []
     assert win.lp.colors[-1] == ((0, 0), (0, 0, 0))  # pad restored to its (unmapped) base color
     win.on_pad_press((1, 1))
-    assert [r["name"] for r in win._anim_runs] == ["blink"]
+    assert win.anim.running == ["blink"]
 
 
 def test_loaded_preset_legacy_types_are_normalized(win):
@@ -70,13 +70,13 @@ def test_load_preset_paints_each_pad_once(win, lpm):
 
 def test_stopping_animations_does_not_leave_a_second_tick_chain(win, qapp, monkeypatch):
     win.animations["blink"] = {"frames": [{"duration": 30, "pads": {"0,0": "#ff0000"}}]}
-    win._start_animation_playback("blink", 0)
+    win._play_animation("blink", 0)
     _flush_deletes()  # let the first tick run and schedule the next one
     win._stop_animation_playback()
     ticks = []
-    real_tick = win._anim_scheduler_tick
-    monkeypatch.setattr(win, "_anim_scheduler_tick", lambda: (ticks.append(1), real_tick()))
-    win._start_animation_playback("blink", 0)
+    real_advance = win.anim.advance
+    monkeypatch.setattr(win.anim, "advance", lambda now: (ticks.append(1), real_advance(now))[1])
+    win._play_animation("blink", 0)
     loop = QEventLoop()
     QTimer.singleShot(200, loop.quit)
     loop.exec()
@@ -86,14 +86,11 @@ def test_stopping_animations_does_not_leave_a_second_tick_chain(win, qapp, monke
 
 def test_zero_duration_infinite_animation_does_not_hang(win, monkeypatch):
     win.animations["imported"] = {"frames": [{"duration": 0, "pads": {"0,0": "#ff0000"}}]}
-    win._start_animation_playback("imported", 0)
-    monkeypatch.setattr(win, "_restart_anim_timer", lambda ms: None)  # tick runs off the GUI thread here
-    result = []
-    t = threading.Thread(target=lambda: result.append(win._anim_scheduler_tick()), daemon=True)
-    t.start()
-    t.join(2)
+    win._play_animation("imported", 0)
+    monkeypatch.setattr(win, "_now", lambda: 10**12)  # hours later: a 1 ms loop must not be stepped frame by frame
+    win._animate()
+    assert win.anim.running == ["imported"]
     win._stop_animation_playback()
-    assert not t.is_alive(), "scheduler tick never returned"
 
 
 def test_rebuilding_layer_list_keeps_active_layer(win):
@@ -202,10 +199,10 @@ def test_load_config_dialog_rejects_bad_file_and_stops_animations(win, monkeypat
     win.load_config_dialog()
     assert "main" in win.layers  # unchanged
     win.animations["blink"] = {"frames": [{"duration": 500, "pads": {"0,0": "#ff0000"}}]}
-    win._start_animation_playback("blink", 0)
+    win._play_animation("blink", 0)
     picked.append(good)
     win.load_config_dialog()
-    assert win._anim_runs == []
+    assert win.anim.running == []
     assert win.active_layer == "b" and win.layer_list.count() == 2
 
 
@@ -236,13 +233,14 @@ def test_renamed_running_animation_still_toggles(win, monkeypatch):
     monkeypatch.setattr(widgets.TextInputPopup, "get_text", lambda self: ("flash", True))
     win._rename_animation()
     win.on_pad_press((1, 1))  # pad now refers to 'flash': must stop the running loop, not add one
-    assert win._anim_runs == []
+    assert win.anim.running == []
 
 
 def test_deleting_running_animation_stops_it(win):
     _start_looping(win, "blink")
     win._delete_animation()  # QMessageBox.question is patched to Yes
-    assert win._anim_runs == []
+    assert win.anim.running == []
+    assert win.lp.colors[-1] == ((0, 0), (0, 0, 0))  # its pad is restored
 
 
 def test_app_picker_stops_scan_thread_on_close(win):

@@ -26,7 +26,8 @@ from PySide6.QtWidgets import QProxyStyle, QStyle, QStyleFactory, QSystemTrayIco
 from PySide6.QtWidgets import QGraphicsDropShadowEffect
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 import re
-import copy
+import math
+import time
 import traceback
 import atexit
 import signal
@@ -91,7 +92,9 @@ except ImportError:
 from launchpad import config_store  # noqa: E402
 from launchpad.config_store import ConfigStore, PresetError, UnsafePresetName  # noqa: E402
 from launchpad import mapping as padmap  # noqa: E402
-from launchpad.mapping import PadMapping, color_rgb, pad_key, parse_pad_key, to_int  # noqa: E402
+from launchpad.mapping import PadMapping, pad_key, parse_pad_key  # noqa: E402
+from launchpad.animation import AnimationEngine, Tick  # noqa: E402
+from launchpad.leds import LedPainter  # noqa: E402
 
 # AppData configuration location (Windows). Fallback: project root.
 APPDATA_DIR = Path(os.environ.get("APPDATA", Path.home())) / "LaunchpadMapper"
@@ -108,38 +111,9 @@ PRESET_SEED_DIRS = [PROJECT_ROOT / 'presets', _EXE_DIR / 'presets', _EXE_DIR / '
 
 
 class MainWindow(QMainWindow):
-    pad_pressed = Signal(int, int)  # x, y
-    pad_released = Signal(int, int)
-    start_animation_requested = Signal(str, int, bool)  # name, iterations, preview
     # Emitted from the rtmidi thread; queued onto the GUI thread
     _midi_pressed = Signal(int, int)
     _midi_released = Signal(int, int)
-
-    def sync_pad_lights(self):
-        if not hasattr(self, 'lp') or self.lp is None:
-            return
-        anim_active = bool(getattr(self, '_anim_runs', []))
-        composite = getattr(self, '_anim_composite_prev', {}) if anim_active else {}
-
-        # Paint every pad with its base color (off when unmapped), so no clear is needed first;
-        # clearing then repainting made the pads flicker. Don't overwrite pads currently set by animations.
-        def _set_base(pad_xy, rgb):
-            if pad_xy in composite:
-                return
-            try:
-                self.lp.set_pad_color(pad_xy, rgb)
-            except Exception:
-                pass
-
-        # Top row and side column
-        for x in range(8):
-            _set_base((x, -1), self._get_base_color((x, -1)))
-        for y in range(8):
-            _set_base((8, y), self._get_base_color((8, y)))
-        # Grid
-        for y in range(8):
-            for x in range(8):
-                _set_base((x, y), self._get_base_color((x, y)))
 
     def __init__(self, start_hidden: bool = False):
         super().__init__()
@@ -152,12 +126,13 @@ class MainWindow(QMainWindow):
         self._drag_pos: QPoint | None = None
         self.current_animation = None
         self.current_frame_index = 0
-        # Animation playback scheduler (supports concurrent runs)
-        self._anim_runs = []  # list of dicts: {name, frames, index, time_left, iterations(None|int), started_seq}
-        self._anim_composite_prev = {}  # pad(tuple)->(r,g,b)
-        self._anim_timer_active = False
-        self._anim_timer = None
-        self._anim_start_seq = 0
+        # Animation playback: the engine plays runs, one timer ticks it, the painter writes the LEDs
+        self.anim = AnimationEngine()
+        self.leds = LedPainter()
+        self._anim_timer = QTimer(self)
+        self._anim_timer.setSingleShot(True)
+        self._anim_timer.setTimerType(Qt.PreciseTimer)
+        self._anim_timer.timeout.connect(self._animate)
         self.current_preset_name = None  # Track which preset is currently loaded
         self.lp = None
         # Internal dirty tracking for debounced autosave
@@ -177,10 +152,6 @@ class MainWindow(QMainWindow):
         # Flag to suppress autosave during initial construction
         self._ready = False
         # Connect signals for thread-safe UI updates
-        self.pad_pressed.connect(self.animate_pad_press)
-        self.pad_released.connect(self.animate_pad_release)
-        # Ensure animations start on GUI thread
-        self.start_animation_requested.connect(self._start_animation_from_signal)
         self._midi_pressed.connect(self._on_midi_pressed)
         self._midi_released.connect(self._on_midi_released)
         self.custom_font_family = None
@@ -344,34 +315,15 @@ class MainWindow(QMainWindow):
         grid = QGridLayout()
         self.pad_buttons = {}
 
-        # Top control row (y=-1)
-        for x in range(8):
-            pad = (x, -1)
-            mapping = self.get_pad_mapping(pad)
-            color = mapping.get("color") if mapping else None
-            label = "◀" if x == 2 else ("▶" if x == 3 else "")
-            btn = PadButton(x, -1, label=label, color=color, control=True)
+        # Top control row (y=-1) in row 0, the 8x8 matrix below it, side column (x=8) in column 8
+        for pad in padmap.ALL_PADS:
+            x, y = pad
+            label = "◀" if pad == (2, -1) else ("▶" if pad == (3, -1) else "")
+            btn = PadButton(x, y, label=label, control=(y == -1 or x == 8))
             btn.clicked.connect(lambda checked, p=pad: self.edit_pad(p))
-            grid.addWidget(btn, 0, x)
+            grid.addWidget(btn, y + 1, x)
             self.pad_buttons[pad] = btn
-
-        # Main 8x8 matrix + side column (x=8)
-        for y in range(8):
-            side_pad = (8, y)
-            side_mapping = self.get_pad_mapping(side_pad)
-            side_color = side_mapping.get("color") if side_mapping else None
-            side_btn = PadButton(8, y, label="", color=side_color, control=True)
-            side_btn.clicked.connect(lambda checked, p=side_pad: self.edit_pad(p))
-            grid.addWidget(side_btn, y + 1, 8)
-            self.pad_buttons[side_pad] = side_btn
-            for x in range(8):
-                pad = (x, y)
-                mapping = self.get_pad_mapping(pad)
-                color = mapping.get("color") if mapping else None
-                btn = PadButton(x, y, label="", color=color)
-                btn.clicked.connect(lambda checked, p=pad: self.edit_pad(p))
-                grid.addWidget(btn, y + 1, x)
-                self.pad_buttons[pad] = btn
+        self.update_grid()
 
         grid_widget.setLayout(grid)
         main_layout.addWidget(grid_widget)
@@ -535,24 +487,13 @@ class MainWindow(QMainWindow):
         self.anim_grid_widget = QWidget()
         g = QGridLayout()
         self.anim_pad_buttons = {}
-        # Top control row y=-1 at row 0
-        for x in range(8):
-            tbtn = PadButton(x, -1, label="", color=None, control=True)
-            tbtn.clicked.connect(lambda checked, p=(x, -1): self._edit_animation_pad(p))
-            g.addWidget(tbtn, 0, x)
-            self.anim_pad_buttons[(x, -1)] = tbtn
-        # Matrix rows + side column
-        for y in range(8):
-            # side column x=8 at column 8, row offset +1
-            sbtn = PadButton(8, y, label="", color=None, control=True)
-            sbtn.clicked.connect(lambda checked, p=(8, y): self._edit_animation_pad(p))
-            g.addWidget(sbtn, y + 1, 8)
-            self.anim_pad_buttons[(8, y)] = sbtn
-            for x in range(8):
-                btn = PadButton(x, y, label="", color=None)
-                btn.clicked.connect(lambda checked, p=(x, y): self._edit_animation_pad(p))
-                g.addWidget(btn, y + 1, x)
-                self.anim_pad_buttons[(x, y)] = btn
+        # Same layout as the mappings grid
+        for pad in padmap.ALL_PADS:
+            x, y = pad
+            btn = PadButton(x, y, label="", color=None, control=(y == -1 or x == 8))
+            btn.clicked.connect(lambda checked, p=pad: self._edit_animation_pad(p))
+            g.addWidget(btn, y + 1, x)
+            self.anim_pad_buttons[pad] = btn
         self.anim_grid_widget.setLayout(g)
         right.addWidget(self.anim_grid_widget)
         play_row = QHBoxLayout()
@@ -623,9 +564,7 @@ class MainWindow(QMainWindow):
                 if isinstance(mapping, dict) and mapping.get("type") == padmap.ANIMATION and mapping.get("name") == old:
                     mapping["name"] = new_name
         # Running runs follow the rename, so their pad can still stop them
-        for run in self._anim_runs:
-            if run['name'] == old:
-                run['name'] = new_name
+        self.anim.rename(old, new_name)
         # Refresh list
         self.animation_list.clear()
         self.animation_list.addItems(sorted(self.animations.keys()))
@@ -646,8 +585,9 @@ class MainWindow(QMainWindow):
         if reply != QMessageBox.Yes:
             return
         self.animations.pop(self.current_animation, None)
-        # A deleted loop-forever animation could otherwise never be stopped (finite runs end by themselves)
-        self._stop_infinite_runs(self.current_animation)
+        # A deleted loop-forever animation could otherwise never be stopped
+        self.anim.stop(self.current_animation)
+        self._animate()
         self.animation_list.clear()
         self.animation_list.addItems(sorted(self.animations.keys()))
         self.current_animation = None
@@ -795,187 +735,39 @@ class MainWindow(QMainWindow):
     def _play_selected_animation(self):
         if not self.current_animation:
             return
-        frames = self.animations[self.current_animation]["frames"]
-        if not frames:
-            return
-        # Preview playback (non-loop; single run) on GUI thread
-        self.start_animation_requested.emit(self.current_animation, 1, True)
+        self._play_animation(self.current_animation, 1)
 
-    def _play_animation_frame(self):
-        # Deprecated in favor of scheduler
-        pass
-
-    def _start_animation_playback(self, name, iterations: int, preview: bool = False):
+    def _play_animation(self, name: str, iterations: int):
+        """Start `name` for `iterations` cycles (0 or less: loop; starting a running loop stops it)."""
         if name not in self.animations:
             return
-        self._schedule_animation_run(name, iterations, preview)
+        self.anim.start(name, self.animations[name].get("frames", []), iterations, self._now())
+        self._animate()
 
     def _stop_animation_playback(self):
-        # Stop all animation runs and restore base lights on affected pads
-        was_animating = bool(self._anim_runs or self._anim_composite_prev)
-        self._anim_runs = []
-        if self._anim_timer is not None:
-            self._anim_timer.stop()
-        self._anim_composite_prev = {}
-        self._anim_timer_active = False
-        if was_animating:
-            self.sync_pad_lights()
+        """Stop every animation; their pads go back to the base colors."""
+        self.anim.stop()
+        self._animate()
 
-    def _schedule_animation_run(self, name: str, iterations: int, preview: bool = False):
-        frames = self.animations.get(name, {}).get('frames', [])
-        if not frames:
-            return
-        iters = None if iterations <= 0 else int(iterations)
-        self._anim_start_seq += 1
-        # Snapshot: the editor mutates the live frames list, which would desync a running index
-        frames = copy.deepcopy(frames)
-        run = {
-            'name': name,
-            'frames': frames,
-            'index': 0,
-            'time_left': to_int(frames[0].get('duration'), 300),
-            'iterations': iters,
-            'started_seq': self._anim_start_seq,
-        }
-        self._anim_runs.append(run)
-        if not self._anim_timer_active:
-            self._anim_timer_active = True
-            self._restart_anim_timer(0)
+    @staticmethod
+    def _now() -> float:
+        return time.monotonic() * 1000
 
-    def _restart_anim_timer(self, ms: int):
-        # One restartable timer, so stopping playback cancels the pending tick (no duplicate tick chains)
-        if self._anim_timer is None:
-            self._anim_timer = QTimer(self)
-            self._anim_timer.setSingleShot(True)
-            self._anim_timer.timeout.connect(lambda: self._anim_scheduler_tick())
-        self._anim_timer.start(ms)
-
-    def _stop_infinite_runs(self, name: str) -> bool:
-        """Stop loop-forever runs of `name` and restore pads no other run is drawing. Returns True if any stopped."""
-        keep = [r for r in self._anim_runs if not (r['name'] == name and r['iterations'] is None)]
-        if len(keep) == len(self._anim_runs):
-            return False
-        self._anim_runs = keep
-        still_drawn = {parse_pad_key(key) for r in keep for key in r['frames'][r['index']].get('pads', {})}
-        for pad in list(self._anim_composite_prev):
-            if pad not in still_drawn:
-                del self._anim_composite_prev[pad]
-                if self.lp:
-                    self.lp.set_pad_color(pad, self._get_base_color(pad))
-        return True
-
-    def _anim_scheduler_tick(self):
+    def _animate(self):
+        """Advance animations to now, paint the result and schedule the next change (the only tick chain)."""
+        now = self._now()
         try:
-            self._anim_scheduler_step()
+            tick = self.anim.advance(now)
         except Exception:
-            # A failed tick never reschedules; stop cleanly so new animations can start again
+            # A failed tick would never reschedule; stop cleanly so new animations can start again
             _debug_log(f"Animation tick failed:\n{traceback.format_exc()}")
-            self._stop_animation_playback()
-
-    def _anim_scheduler_step(self):
-        # If no runs, restore any composite leftovers and stop timer
-        if not self._anim_runs:
-            if self.lp:
-                try:
-                    for pad in list(self._anim_composite_prev.keys()):
-                        self.lp.set_pad_color(pad, self._get_base_color(pad))
-                except Exception:
-                    pass
-            self._anim_composite_prev = {}
-            self._anim_timer_active = False
-            self.sync_pad_lights()
-            return
-        # Compose current frame outputs; later runs override earlier on conflicts
-        composite = {}
-        for run in sorted(self._anim_runs, key=lambda r: r['started_seq']):
-            fr = run['frames'][run['index']]
-            for key, col in fr.get('pads', {}).items():
-                pad, rgb = parse_pad_key(key), color_rgb(col)
-                if pad is not None and rgb is not None:
-                    composite[pad] = rgb
-        # Apply diffs vs previous composite
-        prev = self._anim_composite_prev or {}
-        to_set = {pad: rgb for pad, rgb in composite.items() if pad not in prev or prev.get(pad) != rgb}
-        to_restore = [pad for pad in prev.keys() if pad not in composite]
-        if self.lp:
-            try:
-                for pad, rgb in to_set.items():
-                    self.lp.set_pad_color(pad, rgb)
-                for pad in to_restore:
-                    self.lp.set_pad_color(pad, self._get_base_color(pad))
-            except Exception:
-                pass
-        self._anim_composite_prev = composite
-        # Determine dt (ms) until next change across runs
-        dt = min(max(1, int(r['time_left'])) for r in self._anim_runs)
-        # Advance time and progress frames, removing finished runs
-        remaining = []
-        for run in self._anim_runs:
-            run['time_left'] = int(run['time_left']) - dt
-            while run['time_left'] <= 0:
-                run['index'] += 1
-                frames = run['frames']
-                if run['index'] >= len(frames):
-                    if run['iterations'] is None:
-                        run['index'] = 0
-                    elif run['iterations'] > 1:
-                        run['iterations'] -= 1
-                        run['index'] = 0
-                    else:
-                        # finished
-                        break
-                # >= 1 ms: an all-zero-duration looping animation (possible via import) would spin here forever
-                run['time_left'] += max(1, to_int(frames[run['index']].get('duration'), 300))
-            # Keep run if not finished
-            if run['index'] < len(run['frames']) or (run['iterations'] is None):
-                remaining.append(run)
-        self._anim_runs = remaining
-        # Schedule next tick
-        self._restart_anim_timer(dt if self._anim_runs else 0)
-
-    def _get_base_color(self, pad):
-        """Return the base RGB color for a pad from the current layer mapping, or off if none."""
-        mapping = self.get_pad_mapping(pad)
-        return (color_rgb(mapping) if isinstance(mapping, dict) else None) or (0, 0, 0)
-
-    def _start_animation_from_signal(self, name: str, iterations: int, preview: bool):
-        # Wrapper to ensure playback starts on the GUI thread
-        self._start_animation_playback(name, iterations, preview)
-
-    def _compute_base_colors(self):
-        base = {}
-        pads = self.layers.get(self.active_layer, {}).get("pads", {})
-        for key, mapping in pads.items():
-            col = mapping.get("color") if isinstance(mapping, dict) else None
-            if isinstance(col, str) and len(col) == 7 and col.startswith('#'):
-                try:
-                    r = int(col[1:3], 16)
-                    g = int(col[3:5], 16)
-                    b = int(col[5:7], 16)
-                    x, y = map(int, key.split(","))
-                    # Skip pads that are under animation control for this playback
-                    if hasattr(self, "_animation_scope") and self._animation_scope and (x, y) in self._animation_scope:
-                        continue
-                    base[(x, y)] = (r, g, b)
-                except Exception:
-                    pass
-        return base
-
-    def _apply_base_colors_to_hardware(self):
-        if not self.lp:
-            return
-        try:
-            # Clear everything first
-            self.lp.clear()
-            for x in range(8):
-                self.lp.set_pad_color((x, -1), (0, 0, 0))
-            for y in range(8):
-                self.lp.set_pad_color((8, y), (0, 0, 0))
-            # Apply base
-            for (x, y), rgb in (self._animation_base_colors or {}).items():
-                self.lp.set_pad_color((x, y), rgb)
-        except Exception:
-            pass
+            self.anim.stop()
+            tick = Tick(overlay={}, next_due=None)
+        self.leds.paint(overlay=tick.overlay)
+        if tick.next_due is None:
+            self._anim_timer.stop()
+        else:
+            self._anim_timer.start(max(0, math.ceil(tick.next_due - now)))
 
     def _export_animations(self):
         fname, _ = QFileDialog.getSaveFileName(
@@ -1179,6 +971,7 @@ class MainWindow(QMainWindow):
             else:
                 QMessageBox.warning(self, "MIDI", f"Could not open Launchpad: {e}")
             self.lp = None
+            self.leds.attach(None)
             return
         # Callbacks run on the rtmidi thread: only emit signals there, handle on the GUI thread
         self.lp.on_press = lambda pad: self._midi_pressed.emit(pad[0], pad[1])
@@ -1195,7 +988,9 @@ class MainWindow(QMainWindow):
                 )
         else:
             self.statusBar().showMessage("Launchpad connected", 5000)
-        self.sync_pad_lights()
+        # A new controller's LEDs are unknown: attaching makes this paint every pad
+        self.leds.attach(self.lp)
+        self.leds.paint()
 
     def mark_dirty(self):
         self._dirty = True
@@ -1545,11 +1340,8 @@ class MainWindow(QMainWindow):
         elif mapping.type == padmap.ANIMATION:
             anim_name = mapping.name
             if anim_name and anim_name in self.animations:
-                iterations = mapping.iterations
-                # Loop-forever animations toggle: a press while running stops them instead of stacking another run
-                if not (iterations <= 0 and self._stop_infinite_runs(anim_name)):
-                    # 0=infinite, 1=single cycle
-                    self.start_animation_requested.emit(anim_name, iterations, False)
+                # 0=infinite (a press while it loops stops it), 1=single cycle
+                self._play_animation(anim_name, mapping.iterations)
         elif mapping.type == padmap.LAUNCH_APP:
             path = mapping.path
             args = mapping.args
@@ -1579,10 +1371,10 @@ class MainWindow(QMainWindow):
             steps = 1 if mapping.steps is None else mapping.steps
             if act:
                 self._perform_media_control(act, steps)
-        self.pad_pressed.emit(x, y)
+        self.animate_pad_press(x, y)
 
     def on_pad_release(self, pad):
-        self.pad_released.emit(pad[0], pad[1])
+        self.animate_pad_release(pad[0], pad[1])
 
     @Slot(int, int)
     def _on_midi_pressed(self, x, y):
@@ -1648,13 +1440,12 @@ class MainWindow(QMainWindow):
         subprocess.Popen(cmd, shell=False, **kwargs)
 
     def update_grid(self):
+        """Show the active layer's colors (intensity applied) on screen and repaint every Launchpad pad."""
+        base = padmap.pad_colors(self.layers.get(self.active_layer, {}).get("pads", {}))
         for pad, btn in self.pad_buttons.items():
-            mapping = self.get_pad_mapping(pad)
-            if mapping:
-                btn.update_color(mapping.get("color"))
-            else:
-                btn.update_color(None)
-        self.sync_pad_lights()
+            btn.update_color("#%02x%02x%02x" % base[pad] if pad in base else None)
+        # Full repaint (each pad once, no clear first: clearing then repainting made the pads flicker)
+        self.leds.paint(base=base, full=True)
 
     def _select_active_layer_row(self):
         """After rebuilding layer_list: make sure active_layer exists and is the selected row."""
