@@ -57,9 +57,9 @@ class FramelessPopup(QDialog):
 
     def __init__(self, title: str = "", parent=None, allow_minimize: bool = False):
         super().__init__(parent)
-        # Free the popup once closed; otherwise every opened popup stays parented to the main window forever
-        self.setAttribute(Qt.WA_DeleteOnClose, True)
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Dialog)
+        # Freed in done(), not via WA_DeleteOnClose: Qt 6's exec() deletes such dialogs before
+        # returning, so callers couldn't read the result fields afterwards
         # Enable transparent corners so mask + rounded visuals show properly
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self._drag_pos: QPoint | None = None
@@ -117,6 +117,11 @@ class FramelessPopup(QDialog):
             self.setMask(region)
         except Exception:
             pass
+
+    def done(self, result):
+        super().done(result)
+        # Runs once the caller's exec() has returned and read the result
+        self.deleteLater()
 
     def set_popup_title(self, text: str):
         self._title_label.setText(text)
@@ -547,7 +552,6 @@ class AppPickerDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setAttribute(Qt.WA_DeleteOnClose, True)
         self.setWindowTitle("Choose Installed Application")
         self.resize(560, 540)
         v = QVBoxLayout(self)
@@ -581,6 +585,7 @@ class AppPickerDialog(QDialog):
         self._worker.stop()
         self._worker.wait(2000)
         super().done(result)
+        self.deleteLater()  # see FramelessPopup.done
 
     def _on_scan_done(self, entries):
         self._raw_entries = entries
@@ -851,7 +856,7 @@ class PadEditorDialog(FramelessPopup):
                 self.animation_label.setVisible(True)
                 self.animation_select.setVisible(True)
                 self.animation_loop_container.setVisible(True)
-                self.animation_loop_iterations.setValue(mapping.get("iterations", 0))  # Allow for 0 iterations
+                self.animation_loop_iterations.setValue(mapping.get("iterations", 1))  # Same default as on_pad_press
             if mtype == "launch app":
                 self.launch_args.setText(str(mapping.get("args", "")))
         # Hook type change

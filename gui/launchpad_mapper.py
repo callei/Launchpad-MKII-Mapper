@@ -34,6 +34,7 @@ from widgets import (
 )
 import yaml
 import re
+import copy
 import traceback
 import shutil
 import atexit
@@ -110,6 +111,14 @@ def _is_safe_path(base_dir: Path, user_path: Path) -> bool:
     except (OSError, ValueError):
         # ValueError raised if target is not relative to base
         return False
+
+
+def _to_int(value, default: int) -> int:
+    """int(value), or default for hand-edited YAML values that aren't numbers."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 # --------- Main Window Class ---------------------------------------------- #
@@ -192,7 +201,7 @@ class MainWindow(QMainWindow):
         self.ensure_presets_dir()
         self.create_initial_preset_if_missing()
         # Attempt to load existing config (including animations) before building UI
-        self._load_config_on_startup()
+        config_loaded = self._load_config_on_startup()
         # Normalize any legacy mapping type names
         self._normalize_all_mappings()
         # Flag to suppress autosave during initial construction
@@ -210,20 +219,12 @@ class MainWindow(QMainWindow):
         self.init_ui()
         self.apply_theme()
         self._install_tray()
-        # Load last used preset if recorded; else fallback to 'empty' if present
-        try:
-            last_preset = None
-            ui_section = self.config.get('ui') if isinstance(self.config, dict) else {}
-            if isinstance(ui_section, dict):
-                last_preset = ui_section.get('last_preset')
-            if last_preset and (PRESETS_DIR / f"{last_preset}.yaml").exists():
-                self.load_preset(last_preset)
-            else:
-                empty_path = PRESETS_DIR / "empty.yaml"
-                if empty_path.exists():
-                    self.load_preset("empty")
-        except Exception:
-            pass
+        # Fresh install only: config.yaml already holds the user's pads, and loading a preset would replace them
+        if not config_loaded and (PRESETS_DIR / "empty.yaml").exists():
+            try:
+                self.load_preset("empty")
+            except Exception:
+                pass
         # Mark ready so subsequent edits trigger autosave
         self._ready = True
         # Try automatic Launchpad connect after UI shown
@@ -317,7 +318,7 @@ class MainWindow(QMainWindow):
                     json.dump(self.config, f, indent=2)
             else:
                 with open(fname, "w", encoding="utf-8") as f:
-                    yaml.dump(self.config, f)
+                    yaml.dump(self.config, f, sort_keys=False)
             QMessageBox.information(self, "Exported", f"Config exported to {fname}")
 
     def import_config(self):
@@ -865,11 +866,13 @@ class MainWindow(QMainWindow):
             return
         iters = None if iterations <= 0 else int(iterations)
         self._anim_start_seq += 1
+        # Snapshot: the editor mutates the live frames list, which would desync a running index
+        frames = copy.deepcopy(frames)
         run = {
             'name': name,
             'frames': frames,
             'index': 0,
-            'time_left': int(frames[0].get('duration', 300)),
+            'time_left': _to_int(frames[0].get('duration'), 300),
             'iterations': iters,
             'started_seq': self._anim_start_seq,
         }
@@ -901,6 +904,14 @@ class MainWindow(QMainWindow):
         return True
 
     def _anim_scheduler_tick(self):
+        try:
+            self._anim_scheduler_step()
+        except Exception:
+            # A failed tick never reschedules; stop cleanly so new animations can start again
+            _debug_log(f"Animation tick failed:\n{traceback.format_exc()}")
+            self._stop_animation_playback()
+
+    def _anim_scheduler_step(self):
         # If no runs, restore any composite leftovers and stop timer
         if not self._anim_runs:
             if self.lp:
@@ -971,7 +982,7 @@ class MainWindow(QMainWindow):
                         # finished
                         break
                 # >= 1 ms: an all-zero-duration looping animation (possible via import) would spin here forever
-                run['time_left'] += max(1, int(frames[run['index']].get('duration', 300)))
+                run['time_left'] += max(1, _to_int(frames[run['index']].get('duration'), 300))
             # Keep run if not finished
             if run['index'] < len(run['frames']) or (run['iterations'] is None):
                 remaining.append(run)
@@ -1061,7 +1072,7 @@ class MainWindow(QMainWindow):
             return
         try:
             with open(fname, "w", encoding="utf-8") as f:
-                yaml.dump(self.animations, f)
+                yaml.dump(self.animations, f, sort_keys=False)
             QMessageBox.information(self, "Animations", f"Exported animations to {fname}")
         except Exception as e:
             QMessageBox.warning(self, "Animations", f"Failed to export: {e}")
@@ -1283,20 +1294,29 @@ class MainWindow(QMainWindow):
         self.sync_pad_lights()
 
     # --- Config / persistence helpers ---
-    def _load_config_on_startup(self):
-        if CONFIG_PATH.exists():
+    def _load_config_on_startup(self) -> bool:
+        """Load config.yaml. Returns True if a saved config was loaded."""
+        if not CONFIG_PATH.exists():
+            return False
+        try:
+            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+            if not isinstance(data, dict):
+                raise ValueError("config root is not a mapping")
+        except Exception:
+            # Keep the unreadable file: the next autosave would otherwise overwrite it
             try:
-                with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-                    data = yaml.safe_load(f) or {}
-                if isinstance(data, dict):
-                    self.config = data
-                    self.active_layer = self.config.get("active_layer", "main")
-                    self.layers = self.config.get("layers", {}) or {"main": {"pads": {}}}
-                    self.animations = self.config.get("animations", {}) or {}
-                    if self.active_layer not in self.layers:  # e.g. '' saved by an older build
-                        self.active_layer = next(iter(self.layers))
+                shutil.copyfile(CONFIG_PATH, CONFIG_PATH.with_name("config.yaml.corrupt"))
             except Exception:
                 pass
+            return False
+        self.config = data
+        self.active_layer = self.config.get("active_layer", "main")
+        self.layers = self.config.get("layers", {}) or {"main": {"pads": {}}}
+        self.animations = self.config.get("animations", {}) or {}
+        if self.active_layer not in self.layers:  # e.g. '' saved by an older build
+            self.active_layer = next(iter(self.layers))
+        return True
 
     def _normalize_all_mappings(self):
         def legacy_to_space(t: str) -> str:
@@ -1564,7 +1584,7 @@ class MainWindow(QMainWindow):
                 "animations": {},
             }
             with open(empty, "w", encoding="utf-8") as f:
-                yaml.dump(sample, f)
+                yaml.dump(sample, f, sort_keys=False)
 
     # ---- Presets System (menu-based) ----
     def _rebuild_presets_menu(self):
@@ -1637,7 +1657,7 @@ class MainWindow(QMainWindow):
             "animations": anims,
         }
         with open(path, "w", encoding="utf-8") as f:
-            yaml.dump(data, f)
+            yaml.dump(data, f, sort_keys=False)
 
     def save_current_preset(self):
         if not self.current_preset_name:
@@ -1716,7 +1736,7 @@ class MainWindow(QMainWindow):
             with open(src, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f) or {}
             with open(dest, "w", encoding="utf-8") as f:
-                yaml.dump(data, f)
+                yaml.dump(data, f, sort_keys=False)
         except Exception as e:
             QMessageBox.warning(self, "Import", f"Failed to import: {e}")
             return
@@ -1833,7 +1853,7 @@ class MainWindow(QMainWindow):
         elif mapping and mapping.get("type") == "animation":
             anim_name = mapping.get("name")
             if anim_name and anim_name in self.animations:
-                iterations = mapping.get("iterations", 1)
+                iterations = _to_int(mapping.get("iterations", 1), 1)
                 # Loop-forever animations toggle: a press while running stops them instead of stacking another run
                 if not (iterations <= 0 and self._stop_infinite_runs(anim_name)):
                     # 0=infinite, 1=single cycle
@@ -1864,7 +1884,7 @@ class MainWindow(QMainWindow):
                 self._perform_hotkey(keys)
         elif mapping and mapping.get("type") == "media control":
             act = mapping.get("action")
-            steps = int(mapping.get("steps", 1)) if mapping.get("action") else 1
+            steps = _to_int(mapping.get("steps", 1), 1)
             if act:
                 self._perform_media_control(act, steps)
         self.pad_pressed.emit(x, y)
@@ -1921,6 +1941,8 @@ class MainWindow(QMainWindow):
                         new_map["keys"] = dlg.hotkey_edit.text().strip()
                     elif type_ == "media control":
                         new_map["action"] = dlg.media_select.currentText()
+                        if mapping and "steps" in mapping:  # no editor field for steps; keep the YAML value
+                            new_map["steps"] = mapping["steps"]
                     elif type_ == "switch layer":
                         new_map["layer"] = layer
                     elif type_ == "layer nav":
@@ -2018,7 +2040,8 @@ class MainWindow(QMainWindow):
                 ui = {}
             # Maintain start_mode preference; derive start_hidden for backward compatibility
             ui.setdefault('start_mode', 'normal')
-            if ui.get('start_mode') == 'hidden' or self.isHidden():
+            # isHidden() is True during construction, before the window is first shown
+            if ui.get('start_mode') == 'hidden' or (self._ready and self.isHidden()):
                 ui['start_hidden'] = True
             else:
                 ui['start_hidden'] = False
@@ -2032,13 +2055,15 @@ class MainWindow(QMainWindow):
             pass
         try:
             with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-                yaml.dump(self.config, f)
+                yaml.dump(self.config, f, sort_keys=False)
+            self._dirty = False
             if not silent:
                 QMessageBox.information(self, "Saved", f"Config saved to {CONFIG_PATH}")
         except Exception as e:
             if not silent:
                 QMessageBox.warning(self, "Save", f"Failed to save config: {e}")
-        self._dirty = False
+            else:
+                self.statusBar().showMessage(f"Autosave failed: {e}", 8000)
 
     def load_config(self):
         if CONFIG_PATH.exists():
