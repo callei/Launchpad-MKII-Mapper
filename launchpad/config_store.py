@@ -15,15 +15,11 @@ from pathlib import Path
 
 import yaml
 
+from launchpad.mapping import ANIMATION, normalize_types
+
 _DEFAULT_NAV_PADS = {
     "2,-1": {"type": "layer nav", "nav": "prev", "color": "#2980b9"},
     "3,-1": {"type": "layer nav", "nav": "next", "color": "#8e44ad"},
-}
-_LEGACY_TYPES = {
-    "layer_nav": "layer nav",
-    "switch_layer": "switch layer",
-    "run_process": "run process",
-    "color only": "color",
 }
 
 
@@ -115,7 +111,7 @@ class ConfigStore:
             return LoadResult(default_config(), False, problems)
         _fill_defaults(data)
         for layer in data["layers"].values():
-            _normalize_types(layer["pads"])
+            normalize_types(layer["pads"])
         return LoadResult(data, True)
 
     def save(self, config: dict) -> None:
@@ -175,13 +171,13 @@ class ConfigStore:
             if isinstance(data.get("animations"), dict):
                 animations = data["animations"]
         pads = pads if isinstance(pads, dict) else {}
-        _normalize_types(pads)
+        normalize_types(pads)
         return Preset(pads, animations)
 
     def write_preset(self, name: str, layer: str, pads: dict, animations: dict) -> None:
         """Save one layer's pads as a preset, embedding only the animations those pads use."""
         path = self._preset_path(name)
-        used = {m.get("name") for m in pads.values() if isinstance(m, dict) and m.get("type") == "animation"}
+        used = {m.get("name") for m in pads.values() if isinstance(m, dict) and m.get("type") == ANIMATION}
         data = {"layer": layer, "pads": pads, "animations": {k: v for k, v in animations.items() if k in used}}
         self.presets_dir.mkdir(parents=True, exist_ok=True)
         _atomic_write(data, path)
@@ -233,13 +229,6 @@ def _fill_defaults(config: dict) -> None:
         config["animations"] = {}
     if config.get("active_layer") not in layers:  # e.g. '' saved by an older build
         config["active_layer"] = "main" if "main" in layers else next(iter(layers))
-
-
-def _normalize_types(pads: dict) -> None:
-    """Rewrite legacy mapping type names (layer_nav, run_process, ...) in place."""
-    for mapping in pads.values():
-        if isinstance(mapping, dict) and isinstance(mapping.get("type"), str):
-            mapping["type"] = _LEGACY_TYPES.get(mapping["type"], mapping["type"])
 
 
 def _atomic_write(data: dict, path: Path, backup: Path | None = None) -> None:
