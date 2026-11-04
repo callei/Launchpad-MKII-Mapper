@@ -81,7 +81,9 @@ def test_stopping_animations_does_not_leave_a_second_tick_chain(win, qapp, monke
     QTimer.singleShot(200, loop.quit)
     loop.exec()
     win._stop_animation_playback()
-    assert len(ticks) <= 200 // 30 + 2  # one chain: ~one tick per 30 ms frame
+    # One chain: ~one tick per 30 ms frame, plus the direct ticks from start and stop and timer jitter.
+    # A second chain would roughly double this.
+    assert len(ticks) <= 200 // 30 + 4
 
 
 def test_zero_duration_infinite_animation_does_not_hang(win, monkeypatch):
