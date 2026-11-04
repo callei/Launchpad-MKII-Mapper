@@ -858,6 +858,9 @@ class PadEditorDialog(FramelessPopup):
         self.selected_color = None
         # Buttons
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.clear_pad_btn = buttons.addButton("Clear Pad", QDialogButtonBox.ResetRole)
+        self.clear_pad_btn.setToolTip("Remove this pad's action and color")
+        self.clear_pad_btn.clicked.connect(self._clear_pad)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
@@ -930,6 +933,13 @@ class PadEditorDialog(FramelessPopup):
             name=self.animation_select.currentText() if type_ == padmap.ANIMATION else "",
             iterations=self.animation_loop_iterations.value(),
         ).to_dict()
+
+    def _clear_pad(self):
+        """One click: no action, no color, close (result_mapping() is then None, which removes the pad)."""
+        self.action_type.setCurrentText(padmap.NONE)
+        self.selected_color = None
+        self._show_selected_color()
+        self.accept()
 
     def accept(self):
         if self.action_type.currentText() == padmap.ANIMATION and not self.animation_select.currentText():

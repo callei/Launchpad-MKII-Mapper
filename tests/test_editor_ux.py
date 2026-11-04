@@ -157,3 +157,23 @@ def test_app_picker_lists_store_apps(qapp, monkeypatch):
     dlg.list.setCurrentRow(0)
     assert dlg.get_selected() == (spotify, "")
     dlg.deleteLater()
+
+
+# --- clear pad ---
+
+
+def test_clear_pad_button_empties_the_pad_and_closes(editor):
+    dlg = editor({"type": "hotkey", "keys": "ctrl+c", "color": "#ff0000", "intensity": "high"})
+    dlg.clear_pad_btn.click()
+    assert dlg.result() == QDialog.Accepted
+    assert dlg.result_mapping() is None  # None = remove the pad's mapping
+
+
+def test_clear_pad_removes_the_mapping_from_the_layer(win):
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QApplication
+
+    win.layers[win.active_layer]["pads"]["0,0"] = {"type": "color", "color": "#ff0000"}
+    QTimer.singleShot(0, lambda: QApplication.activeModalWidget().clear_pad_btn.click())
+    win.edit_pad((0, 0))
+    assert win.get_pad_mapping((0, 0)) is None
