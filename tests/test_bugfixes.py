@@ -52,9 +52,7 @@ def test_fresh_install_starts_with_nav_pads(make_win):
 
 def test_layer_order_survives_save(make_win, lpm):
     win = make_win()
-    win.layers.clear()
-    win.layers.update({"zeta": {"pads": {}}, "alpha": {"pads": {}}})
-    win.active_layer = "zeta"
+    win.layer_set.replace({"zeta": {"pads": {}}, "alpha": {"pads": {}}}, "zeta")
     win.save_config(silent=True)
     saved = yaml.safe_load(lpm.CONFIG_PATH.read_text(encoding="utf-8"))
     assert list(saved["layers"]) == ["zeta", "alpha"]

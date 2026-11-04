@@ -95,6 +95,7 @@ from launchpad import mapping as padmap  # noqa: E402
 from launchpad.mapping import PadMapping, pad_key, parse_pad_key  # noqa: E402
 from launchpad.animation import AnimationEngine, Tick  # noqa: E402
 from launchpad.leds import LedPainter  # noqa: E402
+from launchpad.layers import LayerSet  # noqa: E402
 
 # AppData configuration location (Windows). Fallback: project root.
 APPDATA_DIR = Path(os.environ.get("APPDATA", Path.home())) / "LaunchpadMapper"
@@ -134,6 +135,8 @@ class MainWindow(QMainWindow):
         self._anim_timer.setTimerType(Qt.PreciseTimer)
         self._anim_timer.timeout.connect(self._animate)
         self.current_preset_name = None  # Track which preset is currently loaded
+        # Layers and the active layer; init_ui subscribes the list widget and grid to its changes
+        self.layer_set = LayerSet()
         self.lp = None
         # Internal dirty tracking for debounced autosave
         self._dirty = False
@@ -234,10 +237,17 @@ class MainWindow(QMainWindow):
         self._drag_pos = None
         event.accept()
 
+    @property
+    def layers(self) -> dict:
+        """Read-only view: the layer set's live layers dict."""
+        return self.layer_set.layers
+
+    @property
+    def active_layer(self) -> str:
+        return self.layer_set.active
+
     def get_pad_mapping(self, pad):
-        layer = self.layers.get(self.active_layer, {})
-        pads = layer.get("pads", {})
-        return pads.get(pad_key(pad), None)
+        return self.layer_set.active_pads.get(pad_key(pad), None)
 
     def export_config(self):
         fname, _ = QFileDialog.getSaveFileName(
@@ -271,15 +281,9 @@ class MainWindow(QMainWindow):
         """Make a loaded config the live one: stop animations, rebind state, rebuild the layer list, repaint."""
         self._stop_animation_playback()
         self.config = config
-        self.layers = config["layers"]
         self.animations = config["animations"]
-        self.active_layer = config["active_layer"]
-        if not hasattr(self, "layer_list"):  # startup: init_ui builds the list and grid from this state
-            return
-        self.layer_list.clear()
-        self.layer_list.addItems(list(self.layers.keys()))
-        self._select_active_layer_row()
-        self.update_grid()
+        # Rebuilds the layer list and repaints via _on_layers_changed (once init_ui has subscribed it)
+        self.layer_set.replace(config["layers"], config["active_layer"])
         if dirty:
             self.mark_dirty()
 
@@ -334,10 +338,9 @@ class MainWindow(QMainWindow):
         sidebar = QVBoxLayout()
 
         self.layer_list = QListWidget()
-        self.layer_list.addItems(list(self.layers.keys()))
-        if self.active_layer in self.layers:
-            self.layer_list.setCurrentRow(list(self.layers.keys()).index(self.active_layer))
+        self._sync_layer_list()
         self.layer_list.currentTextChanged.connect(self.switch_layer)
+        self.layer_set.subscribe(self._on_layers_changed)
         sidebar.addWidget(QLabel("Layers:"))
         sidebar.addWidget(self.layer_list)
 
@@ -869,16 +872,10 @@ class MainWindow(QMainWindow):
         name, ok = QInputDialog.getText(self, "Add Layer", "Layer name:")
         if not ok or not name.strip():
             return
-        layer_name = name.strip()
-        if layer_name in self.layers:
+        # New layers start with the default nav pads and become active (list and grid follow the model)
+        if not self.layer_set.add(name.strip()):
             QMessageBox.warning(self, "Layer", "Layer already exists.")
             return
-        # Initialize with default navigation buttons (same colors as main layer spec)
-        self.layers[layer_name] = {"pads": config_store.default_nav_pads()}
-        self.layer_list.addItem(layer_name)
-        row = self.layer_list.count() - 1
-        # Triggers switch_layer (via currentTextChanged), which sets active_layer and repaints
-        self.layer_list.setCurrentRow(row)
         self.mark_dirty()
 
     def delete_current_layer(self):
@@ -891,22 +888,10 @@ class MainWindow(QMainWindow):
         )
         if reply != QMessageBox.Yes:
             return
-        self.layers.pop(current, None)
-        # Update list
-        self.layer_list.clear()
-        self.layer_list.addItems(list(self.layers.keys()))
-        # Fallback to main
-        self.active_layer = (
-            "main" if "main" in self.layers else (next(iter(self.layers.keys())) if self.layers else "main")
-        )
-        if self.active_layer not in self.layers:
-            self.layers[self.active_layer] = {"pads": {}}
-            self.layer_list.addItem(self.active_layer)
-        # Select row
-        names = list(self.layers.keys())
-        idx = names.index(self.active_layer)
-        # Triggers switch_layer (via currentTextChanged), which repaints
-        self.layer_list.setCurrentRow(idx)
+        # Falls back to 'main' (else the first layer); the model refuses to delete the last layer
+        if not self.layer_set.delete(current):
+            QMessageBox.warning(self, "Layer", "Cannot delete the last layer.")
+            return
         self.mark_dirty()
 
     def load_custom_font(self):
@@ -1196,8 +1181,6 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Preset", "Preset already exists.")
             return
         # Start from blank current layer (preserving other layers)
-        if self.active_layer not in self.layers:
-            self.layers[self.active_layer] = {"pads": {}}
         # Keep navigation pads if already present, otherwise seed them; clear all other pads for this layer only
         old = self.layers[self.active_layer].get("pads", {})
         self.layers[self.active_layer]["pads"] = {k: old.get(k, v) for k, v in config_store.default_nav_pads().items()}
@@ -1208,7 +1191,7 @@ class MainWindow(QMainWindow):
 
     def _write_current_preset(self) -> bool:
         """Save the active layer's pads as preset current_preset_name; warn and return False on failure."""
-        pads = self.layers.get(self.active_layer, {}).get("pads", {})
+        pads = self.layer_set.active_pads
         try:
             self.store.write_preset(self.current_preset_name, self.active_layer, pads, self.animations)
         except Exception as e:
@@ -1295,8 +1278,6 @@ class MainWindow(QMainWindow):
         self._stop_animation_playback()
         # Merge embedded animations (if present) into global animations set
         self.animations.update(preset.animations)
-        if self.active_layer not in self.layers:
-            self.layers[self.active_layer] = {"pads": {}}
         # Preserve navigation buttons if the preset lacks them
         old = self.layers[self.active_layer]["pads"]
         pads = {**preset.pads}
@@ -1317,25 +1298,16 @@ class MainWindow(QMainWindow):
     def on_pad_press(self, pad):
         x, y = pad
         mapping = PadMapping.from_dict(self.get_pad_mapping(pad))
+        # Layer changes repaint and move the list selection via _on_layers_changed
         if mapping.type == padmap.LAYER_NAV:
-            direction = mapping.nav
-            names = list(self.layers.keys())
-            if names:
-                cur = names.index(self.active_layer) if self.active_layer in names else 0
-                if direction == "prev":
-                    new_index = (cur - 1) % len(names)
-                else:
-                    new_index = (cur + 1) % len(names)
-                self.active_layer = names[new_index]
-                # Triggers switch_layer (via currentTextChanged), which repaints
-                self.layer_list.setCurrentRow(new_index)
+            # Anything but "prev" goes to the next layer (wraps around)
+            if mapping.nav == "prev":
+                self.layer_set.prev()
+            else:
+                self.layer_set.next()
         elif mapping.type == padmap.SWITCH_LAYER:
             target = mapping.layer
-            names = list(self.layers.keys())
-            if target in names:
-                # Triggers switch_layer (via currentTextChanged), which repaints
-                self.layer_list.setCurrentRow(names.index(target))
-            else:
+            if not self.layer_set.switch_to(target):
                 self.statusBar().showMessage(f"Layer '{target}' not found", 4000)
         elif mapping.type == padmap.ANIMATION:
             anim_name = mapping.name
@@ -1398,7 +1370,7 @@ class MainWindow(QMainWindow):
         mapping = self.get_pad_mapping(pad)
         dlg = PadEditorDialog(pad, mapping, self, animation_names=sorted(self.animations.keys()))
         if dlg.exec() == QDialog.Accepted:
-            pads = self.layers[self.active_layer]["pads"]
+            pads = self.layer_set.active_pads
             new_map = dlg.result_mapping()
             if new_map is None:
                 pads.pop(pad_key(pad), None)
@@ -1441,34 +1413,36 @@ class MainWindow(QMainWindow):
 
     def update_grid(self):
         """Show the active layer's colors (intensity applied) on screen and repaint every Launchpad pad."""
-        base = padmap.pad_colors(self.layers.get(self.active_layer, {}).get("pads", {}))
+        base = padmap.pad_colors(self.layer_set.active_pads)
         for pad, btn in self.pad_buttons.items():
             btn.update_color("#%02x%02x%02x" % base[pad] if pad in base else None)
         # Full repaint (each pad once, no clear first: clearing then repainting made the pads flicker)
         self.leds.paint(base=base, full=True)
 
-    def _select_active_layer_row(self):
-        """After rebuilding layer_list: make sure active_layer exists and is the selected row."""
-        names = list(self.layers)
-        if not names:
-            self.layers["main"] = {"pads": {}}
-            self.layer_list.addItem("main")
-            names = ["main"]
-        if self.active_layer not in names:
-            self.active_layer = names[0]
-        self.layer_list.setCurrentRow(names.index(self.active_layer))
+    def _sync_layer_list(self):
+        """Mirror the layer set in layer_list (rebuilt only if names changed) without re-entering switch_layer."""
+        names = self.layer_set.names
+        self.layer_list.blockSignals(True)
+        try:
+            if [self.layer_list.item(i).text() for i in range(self.layer_list.count())] != names:
+                self.layer_list.clear()
+                self.layer_list.addItems(names)
+            self.layer_list.setCurrentRow(names.index(self.layer_set.active))
+        finally:
+            self.layer_list.blockSignals(False)
+
+    def _on_layers_changed(self):
+        self._sync_layer_list()
+        self.update_grid()
 
     def switch_layer(self, name):
-        # layer_list.clear() emits currentTextChanged("") while the list is rebuilt
-        if name not in self.layers:
-            return
-        self.active_layer = name
-        self.update_grid()
+        """User picked a row in layer_list."""
+        self.layer_set.switch_to(name)
 
     def save_config(self, silent: bool = False):
         """Persist full configuration (layers + animations)."""
-        self.config["active_layer"] = self.active_layer
-        self.config["layers"] = self.layers
+        self.config["active_layer"] = self.layer_set.active
+        self.config["layers"] = self.layer_set.layers
         self.config["animations"] = self.animations
         # Ensure UI section exists; keep custom fields
         try:

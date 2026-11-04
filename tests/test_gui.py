@@ -46,16 +46,18 @@ def _reset_led_log(win):
 
 
 def test_layer_switch_paints_each_pad_once(win):
-    win.layers["second"] = {"pads": {}}
+    win.layer_set.add("second")
+    win.layer_set.switch_to("main")
     _reset_led_log(win)
-    win.switch_layer("second")
+    win.layer_list.setCurrentRow(1)  # user picks "second" in the list
+    assert win.active_layer == "second"
     assert win.lp.clears == 0
     assert len(win.lp.colors) == 80 == len({pad for pad, _ in win.lp.colors})
 
 
 def test_hardware_layer_nav_paints_each_pad_once(win):
-    win.layers["second"] = {"pads": {}}
-    win.layer_list.addItem("second")
+    win.layer_set.add("second")
+    win.layer_set.switch_to("main")
     _reset_led_log(win)
     win.on_pad_press((3, -1))  # default "next" nav pad
     assert win.active_layer == "second"
@@ -118,8 +120,8 @@ def test_startup_repairs_missing_active_layer(qapp, lpm, win):
 
 
 def test_switch_layer_pad(win):
-    win.layers["drums"] = {"pads": {}}
-    win.layer_list.addItem("drums")
+    win.layer_set.add("drums")
+    win.layer_set.switch_to("main")
     win.layers["main"]["pads"]["0,0"] = {"type": "switch layer", "layer": "drums"}
     win.on_pad_press((0, 0))
     assert win.active_layer == "drums"
@@ -130,6 +132,22 @@ def test_switch_layer_pad_to_missing_layer_is_ignored(win):
     win.layers["main"]["pads"]["0,0"] = {"type": "switch layer", "layer": "nope"}
     win.on_pad_press((0, 0))
     assert win.active_layer == "main"
+    assert win.statusBar().currentMessage() == "Layer 'nope' not found"
+
+
+def test_hardware_nav_and_layer_list_stay_in_sync(win):
+    win.layer_set.add("b")
+    win.layer_set.add("c")
+    assert [win.layer_list.item(i).text() for i in range(win.layer_list.count())] == ["main", "b", "c"]
+    win.on_pad_press((3, -1))  # next: wraps c -> main
+    assert win.active_layer == "main" and win.layer_list.currentItem().text() == "main"
+    win.on_pad_press((2, -1))  # prev: wraps main -> c
+    assert win.active_layer == "c" and win.layer_list.currentItem().text() == "c"
+    win.layer_list.setCurrentRow(1)  # user clicks "b"
+    assert win.active_layer == "b"
+    win.on_pad_press((3, -1))
+    assert win.active_layer == "c" and win.layer_list.currentRow() == 2
+    assert win.layer_list.count() == 3
 
 
 def _virtual_controller(reason):
@@ -216,8 +234,11 @@ def test_add_and_delete_layer_trigger_autosave(win, monkeypatch):
     monkeypatch.setattr(QInputDialog, "getText", staticmethod(lambda *a, **k: ("extra", True)))
     win.add_layer_dialog()
     assert dirty == [1]
+    assert win.active_layer == "extra" and win.layer_list.currentItem().text() == "extra"
+    assert win.get_pad_mapping((3, -1))["type"] == "layer nav"
     win.delete_current_layer()  # QMessageBox.question is patched to Yes
     assert "extra" not in win.layers and dirty == [1, 1]
+    assert win.active_layer == "main" and win.layer_list.count() == 1
 
 
 def _start_looping(win, name):
