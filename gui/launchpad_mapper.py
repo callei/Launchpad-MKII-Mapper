@@ -107,6 +107,23 @@ _EXE_DIR = Path(sys.executable).resolve().parent
 PRESET_SEED_DIRS = [PROJECT_ROOT / 'presets', _EXE_DIR / 'presets', _EXE_DIR / '_internal' / 'presets']
 
 
+def app_version() -> str:
+    """pyproject.toml's version; a frozen exe reads its own version resource (build_exe.ps1 sets it from there)."""
+    try:
+        if getattr(sys, 'frozen', False) and sys.platform == 'win32':
+            import win32api
+
+            info = win32api.GetFileVersionInfo(sys.executable, '\\')
+            ms, ls = info['FileVersionMS'], info['FileVersionLS']
+            return f"{ms >> 16}.{ms & 0xFFFF}.{ls >> 16}"
+        import tomllib
+
+        with open(PROJECT_ROOT / 'pyproject.toml', 'rb') as f:
+            return tomllib.load(f)['project']['version']
+    except Exception:
+        return "unknown"
+
+
 # --------- Main Window Class ---------------------------------------------- #
 
 
@@ -309,9 +326,21 @@ class MainWindow(QMainWindow):
             "<b>Validation:</b> Duplicate/conflicting actions are prevented.<br>"
             "<b>Color Only:</b> Choose 'color only' or pick a color with no action to just light a pad.<br>"
             "<b>Presets:</b> Use preset controls to load / save mapping sets.<br>"
-            "<b>Pad Animation:</b> Physical pad presses render a thick border in the UI.<br>"
+            "<b>Pad Animation:</b> Physical pad presses render a thick border in the UI.<br><br>"
+            f"Version {app_version()} &middot; by "
+            '<a href="https://github.com/callei">callei</a>'
         )
-        QMessageBox.information(self, "Help/About", help_text)
+        # A plain dialog, not QMessageBox.information: that plays the Windows notification sound
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Help/About")
+        label = QLabel(help_text)
+        label.setOpenExternalLinks(True)
+        ok = QPushButton("OK")
+        ok.clicked.connect(dlg.accept)
+        layout = QVBoxLayout(dlg)
+        layout.addWidget(label)
+        layout.addWidget(ok, alignment=Qt.AlignRight)
+        dlg.exec()
 
     def init_ui(self):
         # Central & tab widget with custom title bar wrapper

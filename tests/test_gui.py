@@ -299,3 +299,17 @@ def test_unplug_is_reported_and_replug_repaints_every_pad(win):
     assert win.port.state == "connected"
     assert "reconnected" in win.statusBar().currentMessage()
     assert len(win.port.controller.colors) == 80
+
+
+def test_about_shows_version_and_author_without_a_message_box(win, lpm, monkeypatch):
+    import tomllib
+
+    from PySide6.QtWidgets import QLabel, QMessageBox
+
+    version = tomllib.loads((lpm.PROJECT_ROOT / "pyproject.toml").read_text())["project"]["version"]
+    texts = []
+    monkeypatch.setattr(lpm.QDialog, "exec", lambda dlg: texts.extend(lbl.text() for lbl in dlg.findChildren(QLabel)))
+    monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a, **k: texts.append("message box")))
+    win.show_help()
+    (text,) = texts
+    assert f"Version {version}" in text and "https://github.com/callei" in text
