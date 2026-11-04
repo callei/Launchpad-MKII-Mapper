@@ -1,6 +1,8 @@
 import mido
 from typing import Optional, Callable, Tuple, Iterable
 
+from launchpad.mapping import ALL_PADS
+
 PadCoord = Tuple[int, int]  # (x, y) 0-7 for grid (y=0 is top row)
 
 
@@ -226,8 +228,7 @@ class LaunchpadController:
                 pass
         if self.mapping_mode == 'mk2':
             # MK2 pads are notes 11..89 plus top row 104..111, not 0..63
-            pads = [(x, y) for y in range(8) for x in range(9)] + [(x, -1) for x in range(8)]
-            self.set_many((pad, (0, 0, 0)) for pad in pads)
+            self.set_many((pad, (0, 0, 0)) for pad in ALL_PADS)
             return
         for note in range(64):
             self._safe_send(mido.Message('note_on', note=note, velocity=0))

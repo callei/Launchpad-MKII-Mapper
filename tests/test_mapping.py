@@ -137,3 +137,24 @@ def test_color_without_color_is_removed():
 
 def test_intensity_only_stored_with_color():
     assert PadMapping(type="hotkey", keys="a", intensity="high").to_dict() == {"type": "hotkey", "keys": "a"}
+
+
+def test_all_pads_lists_the_80_led_pads():
+    from launchpad.mapping import ALL_PADS
+
+    assert len(ALL_PADS) == 80 == len(set(ALL_PADS))
+    assert {(x, -1) for x in range(8)} | {(8, y) for y in range(8)} <= set(ALL_PADS)
+    assert (8, -1) not in ALL_PADS
+
+
+def test_pad_colors_resolves_intensity_and_skips_junk():
+    from launchpad.mapping import pad_colors
+
+    pads = {
+        "0,0": {"type": "color", "color": "#ff0000", "intensity": "high"},
+        "1,0": {"type": "hotkey", "keys": "a"},
+        "x": {"color": "#ff0000"},
+        "2,0": "#ff0000",
+    }
+    assert pad_colors(pads) == {(0, 0): (255, 0, 0)}
+    assert pad_colors(None) == {}

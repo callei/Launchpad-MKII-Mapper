@@ -33,6 +33,10 @@ _LEGACY_TYPES = {
 _HEX_COLOR = re.compile(r"#[0-9a-fA-F]{6}")
 
 
+# Every pad with an LED: top round buttons (y=-1), then each grid row followed by its right-column button (x=8)
+ALL_PADS = tuple([(x, -1) for x in range(8)] + [(x, y) for y in range(8) for x in range(9)])
+
+
 def pad_key(pad) -> str:
     """The YAML key for pad (x, y): "x,y"."""
     return f"{pad[0]},{pad[1]}"
@@ -90,6 +94,16 @@ def color_rgb(spec) -> tuple[int, int, int] | None:
         return None
     f = _INTENSITY_FACTORS[intensity]
     return tuple(min(255, int(int(color[i : i + 2], 16) * f)) for i in (1, 3, 5))
+
+
+def pad_colors(pads) -> dict[tuple[int, int], tuple[int, int, int]]:
+    """RGB per pad for a layer's {"x,y": mapping} dict; pads without a valid color are left out."""
+    colors = {}
+    for key, mapping in pads.items() if isinstance(pads, dict) else ():
+        pad, rgb = parse_pad_key(key), color_rgb(mapping) if isinstance(mapping, dict) else None
+        if pad is not None and rgb is not None:
+            colors[pad] = rgb
+    return colors
 
 
 def _str(value) -> str:
