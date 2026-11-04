@@ -18,9 +18,12 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QSpinBox,
     QCheckBox,
+    QMessageBox,
 )
 from PySide6.QtCore import Qt, Signal, QPoint, QTimer, QThread
 from PySide6.QtGui import QColor, QPainterPath, QRegion
+
+from launchpad import mapping as padmap
 
 
 class PadButton(QPushButton):
@@ -175,9 +178,9 @@ class ColorPickerPopup(FramelessPopup):
         inten_row = QHBoxLayout()
         inten_row.addWidget(QLabel("Intensity:"))
         self.intensity_select = QComboBox()
-        self.intensity_select.addItems(["low", "medium", "high"])
+        self.intensity_select.addItems(padmap.INTENSITIES)
         try:
-            idx = ["low", "medium", "high"].index(self._intensity)
+            idx = padmap.INTENSITIES.index(self._intensity)
         except ValueError:
             idx = 1
         self.intensity_select.setCurrentIndex(idx)
@@ -668,20 +671,8 @@ class PadEditorDialog(FramelessPopup):
         layout = self.content_layout()
         # Action type
         self.action_type = QComboBox()
-        # Display names are space-based; underlying stored mapping types are also space-based (legacy underscore forms normalized on load)
-        self.action_type.addItems(
-            [
-                "none",
-                "color only",
-                "run process",
-                "launch app",
-                "hotkey",
-                "media control",
-                "switch layer",
-                "layer nav",
-                "animation",
-            ]
-        )
+        # Stored types plus "none" (no action) and "color only" (stored as type "color")
+        self.action_type.addItems([padmap.NONE, "color only", *padmap.ACTION_TYPES])
         layout.addWidget(QLabel("Action Type:"))
         layout.addWidget(self.action_type)
         # Value (command / process)
@@ -758,7 +749,7 @@ class PadEditorDialog(FramelessPopup):
         # Color intensity (handled in color picker; keep hidden storage to persist value)
         self.intensity_label = QLabel("Color intensity:")
         self.intensity_select = QComboBox()
-        self.intensity_select.addItems(["low", "medium", "high"])  # default medium
+        self.intensity_select.addItems(padmap.INTENSITIES)
         inten_row = QHBoxLayout()
         inten_row.addWidget(self.intensity_label)
         inten_row.addWidget(self.intensity_select)
@@ -801,84 +792,66 @@ class PadEditorDialog(FramelessPopup):
             self.launch_args,
         ):
             w.setVisible(False)
-        # Pre-fill existing mapping
-        if mapping:
-            # Normalize legacy underscore types to space versions for the editor
-            mtype = mapping.get("type", "none")
-            legacy_map = {"layer_nav": "layer nav", "switch_layer": "switch layer", "run_process": "run process"}
-            mtype = legacy_map.get(mtype, mtype)
-            if mtype == "color":
-                self.action_type.setCurrentText("color only")
-            elif mtype == "print":  # legacy mapping type; treat as none
-                self.action_type.setCurrentText("none")
-            else:
-                self.action_type.setCurrentText(mtype)
-            self.action_value.setText(str(mapping.get("message", mapping.get("command", ""))))
-            if mtype == "launch app":
-                self.launch_path.setText(str(mapping.get("path", "")))
-            if mtype == "hotkey":
-                self.hotkey_edit.setText(str(mapping.get("keys", "")))
-            if mtype == "media control":
-                act = mapping.get("action", "play/pause")
-                idx = self.media_select.findText(act)
-                if idx >= 0:
-                    self.media_select.setCurrentIndex(idx)
-            self.layer_select.setText(str(mapping.get("layer", "")))
-            self.selected_color = mapping.get("color", None)
-            # Intensity default medium
-            inten = str(mapping.get("intensity", "medium")).lower()
-            if inten not in ("low", "medium", "high"):
-                # numeric legacy 1..3 guarded parsing
-                raw_int = mapping.get("intensity")
-                n: int | None = None
-                if isinstance(raw_int, int):
-                    n = raw_int
-                elif isinstance(raw_int, str) and raw_int.isdigit():
-                    try:
-                        n = int(raw_int)
-                    except Exception:
-                        n = None
-                inten = {1: "low", 2: "medium", 3: "high"}.get(n, "medium") if n in (1, 2, 3) else "medium"
-            self.intensity_select.setCurrentText(inten)
-            if mtype in ("layer nav", "layer_nav"):
-                self.nav_label.setVisible(True)
-                self.nav_select.setVisible(True)
-                nav = mapping.get("nav", "prev")
-                idx = self.nav_select.findText(nav)
-                if idx >= 0:
-                    self.nav_select.setCurrentIndex(idx)
-            if mtype == "animation":
-                name = mapping.get("name", "")
-                if name and name in [self.animation_select.itemText(i) for i in range(self.animation_select.count())]:
-                    idx = self.animation_select.findText(name)
-                    if idx >= 0:
-                        self.animation_select.setCurrentIndex(idx)
-                self.animation_label.setVisible(True)
-                self.animation_select.setVisible(True)
-                self.animation_loop_container.setVisible(True)
-                self.animation_loop_iterations.setValue(mapping.get("iterations", 1))  # Same default as on_pad_press
-            if mtype == "launch app":
-                self.launch_args.setText(str(mapping.get("args", "")))
+        # Pre-fill existing mapping; unknown types (e.g. legacy "print") show as "none"
+        m = padmap.PadMapping.from_dict(mapping)
+        self._steps = m.steps  # no editor field for steps; keep the stored value
+        self.action_type.setCurrentText("color only" if m.type == padmap.COLOR else m.type)
+        self.action_value.setText(m.command)
+        self.launch_path.setText(m.path)
+        self.launch_args.setText(m.args)
+        self.hotkey_edit.setText(m.keys)
+        if self.media_select.findText(m.action) >= 0:
+            self.media_select.setCurrentText(m.action)
+        self.layer_select.setText(m.layer)
+        if self.nav_select.findText(m.nav) >= 0:
+            self.nav_select.setCurrentText(m.nav)
+        if self.animation_select.findText(m.name) >= 0:
+            self.animation_select.setCurrentText(m.name)
+        self.animation_loop_iterations.setValue(m.iterations)
+        self.selected_color = m.color
+        self.intensity_select.setCurrentText(m.intensity)
         # Hook type change
         self.action_type.currentTextChanged.connect(self._on_type_changed)
         # Ensure visibility consistent with current type
         self._on_type_changed(self.action_type.currentText())
 
+    def result_mapping(self) -> dict | None:
+        """The mapping to store for this pad, or None to remove it."""
+        type_ = padmap.normalize_type(self.action_type.currentText())
+        return padmap.PadMapping(
+            type=type_,
+            color=self.selected_color,
+            intensity=padmap.intensity_name(self.intensity_select.currentText()),
+            command=self.action_value.text(),
+            path=self.launch_path.text().strip(),
+            args=self.launch_args.text().strip(),
+            keys=self.hotkey_edit.text().strip(),
+            action=self.media_select.currentText(),
+            steps=self._steps,
+            layer=self.layer_select.text(),
+            nav=self.nav_select.currentText() or "prev",
+            name=self.animation_select.currentText() if type_ == padmap.ANIMATION else "",
+            iterations=self.animation_loop_iterations.value(),
+        ).to_dict()
+
+    def accept(self):
+        if self.action_type.currentText() == padmap.ANIMATION and not self.animation_select.currentText():
+            QMessageBox.warning(self, "Animation", "Select an animation.")
+            return
+        super().accept()
+
     def _on_type_changed(self, text):
-        # Normalize text just in case (legacy underscores)
-        legacy_map = {"layer_nav": "layer nav", "switch_layer": "switch layer", "run_process": "run process"}
-        text_norm = legacy_map.get(text, text)
-        is_anim = text_norm == "animation"
+        is_anim = text == padmap.ANIMATION
         self.animation_label.setVisible(is_anim)
         self.animation_select.setVisible(is_anim)
         self.animation_loop_container.setVisible(is_anim)
-        is_nav = text_norm == "layer nav"
+        is_nav = text == padmap.LAYER_NAV
         self.nav_label.setVisible(is_nav)
         self.nav_select.setVisible(is_nav)
-        is_run = text_norm == "run process"
+        is_run = text == padmap.RUN_PROCESS
         self.value_label.setVisible(is_run)
         self.action_value.setVisible(is_run)
-        is_launch = text_norm == "launch app"
+        is_launch = text == padmap.LAUNCH_APP
         self.launch_label.setVisible(is_launch)
         self.launch_path.setVisible(is_launch)
         # The container widget lrw
@@ -886,13 +859,13 @@ class PadEditorDialog(FramelessPopup):
             self.launch_path.parentWidget().setVisible(is_launch)
         except Exception:
             pass
-        is_hotkey = text_norm == "hotkey"
+        is_hotkey = text == padmap.HOTKEY
         self.hotkey_label.setVisible(is_hotkey)
         self.hotkey_edit.setVisible(is_hotkey)
-        is_media = text_norm == "media control"
+        is_media = text == padmap.MEDIA_CONTROL
         self.media_label.setVisible(is_media)
         self.media_select.setVisible(is_media)
-        is_switch = text_norm == "switch layer"
+        is_switch = text == padmap.SWITCH_LAYER
         self.layer_label.setVisible(is_switch)
         self.layer_select.setVisible(is_switch)
         # launch args
@@ -930,7 +903,7 @@ class PadEditorDialog(FramelessPopup):
             self.selected_color = picker.get_selected_color()
             try:
                 inten = picker.get_selected_intensity()
-                if inten in ("low", "medium", "high"):
+                if inten in padmap.INTENSITIES:
                     self.intensity_select.setCurrentText(inten)
             except Exception:
                 pass

@@ -25,19 +25,25 @@ from PySide6.QtGui import QPalette, QColor, QFont, QFontDatabase, QPainter, QPen
 from PySide6.QtWidgets import QProxyStyle, QStyle, QStyleFactory, QSystemTrayIcon, QMenu
 from PySide6.QtWidgets import QGraphicsDropShadowEffect
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
-from widgets import (
-    PadButton,
-    ColorPickerPopup,
-    SettingsPopup,
-    TextInputPopup,
-    PadEditorDialog,
-)
 import re
 import copy
 import traceback
 import atexit
 import signal
 import getpass
+
+# Ensure project root is on sys.path for direct script execution (widgets imports launchpad too)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from widgets import (  # noqa: E402
+    PadButton,
+    ColorPickerPopup,
+    SettingsPopup,
+    TextInputPopup,
+    PadEditorDialog,
+)
 
 # Main GUI module for Launchpad Mapper!
 
@@ -77,11 +83,6 @@ Fixes applied:
 - Adds color-only pad mapping (assign a color without an action), reverted to no color before.
 """
 
-# Ensure project root is on sys.path for direct script execution
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
 # MIDI/Launchpad integration
 try:
     from launchpad.controller import LaunchpadController
@@ -89,6 +90,8 @@ except ImportError:
     LaunchpadController = None
 from launchpad import config_store  # noqa: E402
 from launchpad.config_store import ConfigStore, PresetError, UnsafePresetName  # noqa: E402
+from launchpad import mapping as padmap  # noqa: E402
+from launchpad.mapping import PadMapping, color_rgb, pad_key, parse_pad_key, to_int  # noqa: E402
 
 # AppData configuration location (Windows). Fallback: project root.
 APPDATA_DIR = Path(os.environ.get("APPDATA", Path.home())) / "LaunchpadMapper"
@@ -99,14 +102,6 @@ PRESETS_DIR = APPDATA_DIR / "presets"
 # Shipped presets copied into PRESETS_DIR on first run (dev tree, frozen onedir, or its _internal dir)
 _EXE_DIR = Path(sys.executable).resolve().parent
 PRESET_SEED_DIRS = [PROJECT_ROOT / 'presets', _EXE_DIR / 'presets', _EXE_DIR / '_internal' / 'presets']
-
-
-def _to_int(value, default: int) -> int:
-    """int(value), or default for hand-edited YAML values that aren't numbers."""
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
 
 
 # --------- Main Window Class ---------------------------------------------- #
@@ -189,7 +184,6 @@ class MainWindow(QMainWindow):
         self._midi_pressed.connect(self._on_midi_pressed)
         self._midi_released.connect(self._on_midi_released)
         self.custom_font_family = None
-        self.last_color = None  # Track last used color for dialogs
         self.load_custom_font()
         self.init_ui()
         self.apply_theme()
@@ -272,14 +266,7 @@ class MainWindow(QMainWindow):
     def get_pad_mapping(self, pad):
         layer = self.layers.get(self.active_layer, {})
         pads = layer.get("pads", {})
-        return pads.get(f"{pad[0]},{pad[1]}", None)
-
-    def validate_pad_mapping(self, pad, new_map):
-        pads = self.layers.get(self.active_layer, {}).get("pads", {})
-        if f"{pad[0]},{pad[1]}" in pads and pads[f"{pad[0]},{pad[1]}"] != new_map:
-            QMessageBox.warning(self, "Validation", f"Pad ({pad[0]},{pad[1]}) already has a different mapping.")
-            return False
-        return True
+        return pads.get(pad_key(pad), None)
 
     def export_config(self):
         fname, _ = QFileDialog.getSaveFileName(
@@ -633,7 +620,7 @@ class MainWindow(QMainWindow):
         for layer_data in self.layers.values():
             pads = layer_data.get("pads", {}) if isinstance(layer_data, dict) else {}
             for mapping in pads.values():
-                if isinstance(mapping, dict) and mapping.get("type") == "animation" and mapping.get("name") == old:
+                if isinstance(mapping, dict) and mapping.get("type") == padmap.ANIMATION and mapping.get("name") == old:
                     mapping["name"] = new_name
         # Running runs follow the rename, so their pad can still stop them
         for run in self._anim_runs:
@@ -760,17 +747,10 @@ class MainWindow(QMainWindow):
             return
         pads = frames[idx].get("pads", {})
         for key, col in pads.items():
-            try:
-                x, y = map(int, key.split(","))
-                btn = self.anim_pad_buttons.get((x, y))
-                if btn:
-                    # col may be a hex string or a dict {color: "#rrggbb", intensity: "low|medium|high"}
-                    if isinstance(col, dict):
-                        btn.update_color(col.get("color"))
-                    else:
-                        btn.update_color(col)
-            except Exception:
-                pass
+            btn = self.anim_pad_buttons.get(parse_pad_key(key))
+            if btn:
+                # col may be a hex string or a dict {color: "#rrggbb", intensity: "low|medium|high"}
+                btn.update_color(col.get("color") if isinstance(col, dict) else col)
 
     def _edit_animation_pad(self, pad):
         if not self.current_animation:
@@ -788,9 +768,9 @@ class MainWindow(QMainWindow):
             sel = picker.get_selected_color()
             if sel:
                 inten = picker.get_selected_intensity()
-                frame.setdefault("pads", {})[f"{pad[0]},{pad[1]}"] = {"color": sel, "intensity": inten}
+                frame.setdefault("pads", {})[pad_key(pad)] = {"color": sel, "intensity": inten}
             else:
-                frame.setdefault("pads", {}).pop(f"{pad[0]},{pad[1]}", None)
+                frame.setdefault("pads", {}).pop(pad_key(pad), None)
         else:
             # Cancel: no change
             pass
@@ -853,7 +833,7 @@ class MainWindow(QMainWindow):
             'name': name,
             'frames': frames,
             'index': 0,
-            'time_left': _to_int(frames[0].get('duration'), 300),
+            'time_left': to_int(frames[0].get('duration'), 300),
             'iterations': iters,
             'started_seq': self._anim_start_seq,
         }
@@ -876,7 +856,7 @@ class MainWindow(QMainWindow):
         if len(keep) == len(self._anim_runs):
             return False
         self._anim_runs = keep
-        still_drawn = {tuple(map(int, key.split(','))) for r in keep for key in r['frames'][r['index']].get('pads', {})}
+        still_drawn = {parse_pad_key(key) for r in keep for key in r['frames'][r['index']].get('pads', {})}
         for pad in list(self._anim_composite_prev):
             if pad not in still_drawn:
                 del self._anim_composite_prev[pad]
@@ -910,27 +890,9 @@ class MainWindow(QMainWindow):
         for run in sorted(self._anim_runs, key=lambda r: r['started_seq']):
             fr = run['frames'][run['index']]
             for key, col in fr.get('pads', {}).items():
-                try:
-                    x, y = map(int, key.split(','))
-                    if isinstance(col, dict):
-                        hex_col = col.get('color')
-                        inten = str(col.get('intensity', 'medium')).lower()
-                    else:
-                        hex_col = col
-                        inten = 'medium'
-                    if not (isinstance(hex_col, str) and len(hex_col) == 7 and hex_col.startswith('#')):
-                        continue
-                    r = int(hex_col[1:3], 16)
-                    g = int(hex_col[3:5], 16)
-                    b = int(hex_col[5:7], 16)
-                    factor_map = {'low': 0.4, 'medium': 0.7, 'high': 1.0}
-                    f = factor_map.get(inten, 0.7)
-                    r = max(0, min(255, int(r * f)))
-                    g = max(0, min(255, int(g * f)))
-                    b = max(0, min(255, int(b * f)))
-                    composite[(x, y)] = (r, g, b)
-                except Exception:
-                    pass
+                pad, rgb = parse_pad_key(key), color_rgb(col)
+                if pad is not None and rgb is not None:
+                    composite[pad] = rgb
         # Apply diffs vs previous composite
         prev = self._anim_composite_prev or {}
         to_set = {pad: rgb for pad, rgb in composite.items() if pad not in prev or prev.get(pad) != rgb}
@@ -963,7 +925,7 @@ class MainWindow(QMainWindow):
                         # finished
                         break
                 # >= 1 ms: an all-zero-duration looping animation (possible via import) would spin here forever
-                run['time_left'] += max(1, _to_int(frames[run['index']].get('duration'), 300))
+                run['time_left'] += max(1, to_int(frames[run['index']].get('duration'), 300))
             # Keep run if not finished
             if run['index'] < len(run['frames']) or (run['iterations'] is None):
                 remaining.append(run)
@@ -973,38 +935,8 @@ class MainWindow(QMainWindow):
 
     def _get_base_color(self, pad):
         """Return the base RGB color for a pad from the current layer mapping, or off if none."""
-        mapping = self.layers.get(self.active_layer, {}).get("pads", {}).get(f"{pad[0]},{pad[1]}")
-        if isinstance(mapping, dict):
-            col = mapping.get("color")
-            if isinstance(col, str) and len(col) == 7 and col.startswith('#'):
-                try:
-                    r = int(col[1:3], 16)
-                    g = int(col[3:5], 16)
-                    b = int(col[5:7], 16)
-                    # Apply optional intensity scaling
-                    inten = str(mapping.get("intensity", "medium")).lower()
-                    factor_map = {"low": 0.4, "medium": 0.7, "high": 1.0}
-                    if inten not in factor_map:
-                        # support numeric legacy 1..3 (no stray try-block)
-                        raw_int = mapping.get("intensity")
-                        n: int | None = None
-                        if isinstance(raw_int, int):
-                            n = raw_int
-                        elif isinstance(raw_int, str) and raw_int.isdigit():
-                            try:
-                                n = int(raw_int)
-                            except Exception:
-                                n = None
-                        if n in (1, 2, 3):
-                            inten = {1: "low", 2: "medium", 3: "high"}[n]
-                    f = factor_map.get(inten, 0.7)
-                    r = max(0, min(255, int(r * f)))
-                    g = max(0, min(255, int(g * f)))
-                    b = max(0, min(255, int(b * f)))
-                    return (r, g, b)
-                except Exception:
-                    pass
-        return (0, 0, 0)
+        mapping = self.get_pad_mapping(pad)
+        return (color_rgb(mapping) if isinstance(mapping, dict) else None) or (0, 0, 0)
 
     def _start_animation_from_signal(self, name: str, iterations: int, preview: bool):
         # Wrapper to ensure playback starts on the GUI thread
@@ -1589,9 +1521,9 @@ class MainWindow(QMainWindow):
     # --- Pad press callbacks ---
     def on_pad_press(self, pad):
         x, y = pad
-        mapping = self.get_pad_mapping(pad)
-        if mapping and mapping.get("type") == "layer nav":
-            direction = mapping.get("nav")
+        mapping = PadMapping.from_dict(self.get_pad_mapping(pad))
+        if mapping.type == padmap.LAYER_NAV:
+            direction = mapping.nav
             names = list(self.layers.keys())
             if names:
                 cur = names.index(self.active_layer) if self.active_layer in names else 0
@@ -1602,32 +1534,32 @@ class MainWindow(QMainWindow):
                 self.active_layer = names[new_index]
                 # Triggers switch_layer (via currentTextChanged), which repaints
                 self.layer_list.setCurrentRow(new_index)
-        elif mapping and mapping.get("type") == "switch layer":
-            target = mapping.get("layer")
+        elif mapping.type == padmap.SWITCH_LAYER:
+            target = mapping.layer
             names = list(self.layers.keys())
             if target in names:
                 # Triggers switch_layer (via currentTextChanged), which repaints
                 self.layer_list.setCurrentRow(names.index(target))
             else:
                 self.statusBar().showMessage(f"Layer '{target}' not found", 4000)
-        elif mapping and mapping.get("type") == "animation":
-            anim_name = mapping.get("name")
+        elif mapping.type == padmap.ANIMATION:
+            anim_name = mapping.name
             if anim_name and anim_name in self.animations:
-                iterations = _to_int(mapping.get("iterations", 1), 1)
+                iterations = mapping.iterations
                 # Loop-forever animations toggle: a press while running stops them instead of stacking another run
                 if not (iterations <= 0 and self._stop_infinite_runs(anim_name)):
                     # 0=infinite, 1=single cycle
                     self.start_animation_requested.emit(anim_name, iterations, False)
-        elif mapping and mapping.get("type") == "launch app":
-            path = mapping.get("path")
-            args = mapping.get("args", "")
+        elif mapping.type == padmap.LAUNCH_APP:
+            path = mapping.path
+            args = mapping.args
             if path:
                 try:
                     self._launch_app_silent(path, args=args)
                 except Exception as e:
                     QMessageBox.warning(self, "Launch App", f"Failed to launch: {e}")
-        elif mapping and mapping.get("type") == "run process":
-            cmd = mapping.get("command")
+        elif mapping.type == padmap.RUN_PROCESS:
+            cmd = mapping.command
             if cmd:
                 try:
                     # Security: shell=False, so no shell interprets the command
@@ -1638,13 +1570,13 @@ class MainWindow(QMainWindow):
                         subprocess.Popen(shlex.split(cmd), shell=False)
                 except Exception as e:
                     QMessageBox.warning(self, "Run Process", f"Failed: {e}")
-        elif mapping and mapping.get("type") == "hotkey":
-            keys = mapping.get("keys")
+        elif mapping.type == padmap.HOTKEY:
+            keys = mapping.keys
             if keys:
                 self._perform_hotkey(keys)
-        elif mapping and mapping.get("type") == "media control":
-            act = mapping.get("action")
-            steps = _to_int(mapping.get("steps", 1), 1)
+        elif mapping.type == padmap.MEDIA_CONTROL:
+            act = mapping.action
+            steps = 1 if mapping.steps is None else mapping.steps
             if act:
                 self._perform_media_control(act, steps)
         self.pad_pressed.emit(x, y)
@@ -1674,58 +1606,12 @@ class MainWindow(QMainWindow):
         mapping = self.get_pad_mapping(pad)
         dlg = PadEditorDialog(pad, mapping, self, animation_names=sorted(self.animations.keys()))
         if dlg.exec() == QDialog.Accepted:
-            type_ = dlg.action_type.currentText()
-            val = dlg.action_value.text()
-            layer = dlg.layer_select.text()
-            color = dlg.selected_color
-            anim_name = dlg.animation_select.currentText() if type_ == "animation" else None
-            pad_key = f"{pad[0]},{pad[1]}"
-            # Normalize selected type (legacy underscores -> spaces)
-            legacy_map = {"layer_nav": "layer nav", "switch_layer": "switch layer", "run_process": "run process"}
-            type_ = legacy_map.get(type_, type_)
-            if type_ == "none" and not color:
-                # remove mapping
-                self.layers[self.active_layer]["pads"].pop(pad_key, None)
+            pads = self.layers[self.active_layer]["pads"]
+            new_map = dlg.result_mapping()
+            if new_map is None:
+                pads.pop(pad_key(pad), None)
             else:
-                new_map = {}
-                if type_ == "color only" or (type_ == "none" and color):
-                    new_map["type"] = "color"
-                else:
-                    new_map["type"] = type_
-                    if type_ == "run process":
-                        new_map["command"] = val
-                    elif type_ == "launch app":
-                        new_map["path"] = dlg.launch_path.text().strip()
-                        new_map["args"] = dlg.launch_args.text().strip()
-                    elif type_ == "hotkey":
-                        new_map["keys"] = dlg.hotkey_edit.text().strip()
-                    elif type_ == "media control":
-                        new_map["action"] = dlg.media_select.currentText()
-                        if mapping and "steps" in mapping:  # no editor field for steps; keep the YAML value
-                            new_map["steps"] = mapping["steps"]
-                    elif type_ == "switch layer":
-                        new_map["layer"] = layer
-                    elif type_ == "layer nav":
-                        new_map["nav"] = dlg.nav_select.currentText() or "prev"
-                    elif type_ == "animation":
-                        if not anim_name:
-                            QMessageBox.warning(self, "Animation", "Select an animation.")
-                            return
-                        new_map["name"] = anim_name
-                        new_map["iterations"] = dlg.animation_loop_iterations.value()
-                if color:
-                    new_map["color"] = color
-                    self.last_color = color
-                    # Store intensity when a color is set
-                    inten = (dlg.intensity_select.currentText() or "medium").lower()
-                    if inten not in ("low", "medium", "high"):
-                        inten = "medium"
-                    new_map["intensity"] = inten
-                # Do not persist a color-only mapping without a color value
-                if new_map.get("type") == "color" and not color:
-                    self.layers[self.active_layer]["pads"].pop(pad_key, None)
-                else:
-                    self.layers[self.active_layer]["pads"][pad_key] = new_map
+                pads[pad_key(pad)] = new_map
             self.update_grid()
             if self._ready:
                 self.mark_dirty()
