@@ -497,3 +497,21 @@ def test_paint_mode_applies_the_brush_without_a_picker(win, lpm, monkeypatch):
     win.paint_btn.setChecked(False)
     win.anim_pad_buttons[(2, 2)].click()  # paint off: the picker opens again
     assert len(_FakePicker.opened) == 2
+
+
+def test_paint_toggle_shows_its_state(win):
+    assert win.paint_btn.text() == "Paint: off"
+    win.paint_btn.click()
+    assert win.paint_btn.isChecked() and win.paint_btn.text() == "Paint: ON"
+
+
+def test_clicking_the_animation_grid_without_a_frame_explains_why(win):
+    win.anim_pad_buttons[(0, 0)].click()
+    assert win.statusBar().currentMessage() == "Select an animation first"
+    win.animations["empty"] = {"frames": []}
+    win.animation_list.addItem("empty")
+    win.animation_list.setCurrentRow(win.animation_list.count() - 1)
+    win.paint_btn.setChecked(True)
+    win.anim_pad_buttons[(0, 0)].click()
+    assert win.statusBar().currentMessage() == "Add a frame first"
+    assert win.animations["empty"] == {"frames": []}

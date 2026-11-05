@@ -568,8 +568,11 @@ class MainWindow(QMainWindow):
         right.addWidget(self.anim_grid_widget)
         # Paint mode: clicks apply the brush directly (clicking a pad that already has it clears it)
         paint_row = QHBoxLayout()
-        self.paint_btn = QPushButton("Paint")
+        self.paint_btn = QPushButton("Paint: off")
         self.paint_btn.setCheckable(True)
+        # The global QPushButton style has no :checked look, so the toggle state was invisible
+        self.paint_btn.setStyleSheet("QPushButton:checked { background:#2e6b3c; border:1px solid #6c6; color:#fff; }")
+        self.paint_btn.toggled.connect(lambda on: self.paint_btn.setText("Paint: ON" if on else "Paint: off"))
         self.paint_btn.setToolTip("Click pads to give them the brush color; click again to clear")
         self.brush_btn = QPushButton()
         self.brush_btn.setToolTip("Pick the brush color and strength")
@@ -776,13 +779,12 @@ class MainWindow(QMainWindow):
                 btn.update_color(padmap.screen_hex(col))
 
     def _edit_animation_pad(self, pad):
-        if not self.current_animation:
-            return
         idx = self.frame_list.currentRow()
-        if idx < 0:
-            return
-        frames = self.animations[self.current_animation]["frames"]
-        if idx >= len(frames):
+        frames = self.animations[self.current_animation]["frames"] if self.current_animation else []
+        if not 0 <= idx < len(frames):
+            # Clicks used to do nothing here without saying why
+            hint = "Select a frame first" if frames else "Add a frame first"
+            self.statusBar().showMessage(hint if self.current_animation else "Select an animation first", 4000)
             return
         frame = frames[idx]
         if self.paint_btn.isChecked():
