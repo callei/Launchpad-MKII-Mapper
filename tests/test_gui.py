@@ -382,3 +382,28 @@ def test_both_grids_show_intensity(win):
     win.animation_list.addItem("a")
     win.animation_list.setCurrentRow(win.animation_list.count() - 1)
     assert "#3f3f3f" in win.anim_pad_buttons[(0, 0)].styleSheet()
+
+
+def test_saved_custom_colors_survive_a_restart(win, lpm):
+    from PySide6.QtGui import QColor
+    from PySide6.QtWidgets import QColorDialog
+
+    QColorDialog.setCustomColor(2, QColor("#123456"))
+    _reject_next_dialog()
+    win.edit_pad((0, 0))  # any picker/editor use syncs the slots into the config
+    win.save_config(silent=True)
+    QColorDialog.setCustomColor(2, QColor("#ffffff"))
+    again = lpm.MainWindow()
+    try:
+        assert QColorDialog.customColor(2).name() == "#123456"
+    finally:
+        again._force_quit = True
+        again.close()
+        again.deleteLater()
+
+
+def test_unchanged_custom_colors_do_not_dirty_the_config(win, monkeypatch):
+    dirty = []
+    monkeypatch.setattr(win, "mark_dirty", lambda: dirty.append(1))
+    win._sync_custom_colors()
+    assert dirty == []

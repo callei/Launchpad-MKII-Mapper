@@ -213,3 +213,11 @@ def test_export_and_read_mapping(tmp_path):
     (tmp_path / "list.yaml").write_text("- a\n", encoding="utf-8")
     with pytest.raises(ValueError):
         config_store.read_mapping(tmp_path / "list.yaml")
+
+
+def test_custom_colors_are_16_valid_slots():
+    cfg = {"ui": {"custom_colors": ["#FF0000", "nope", 3]}}
+    colors = config_store.custom_colors(cfg)
+    assert len(colors) == 16
+    assert colors[:3] == ["#ff0000", "#ffffff", "#ffffff"]
+    assert config_store.custom_colors({}) == ["#ffffff"] * 16

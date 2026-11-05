@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QTabWidget,
     QSpinBox,
+    QColorDialog,
 )
 from PySide6.QtCore import Qt, Signal, Slot, QPoint, QTimer
 from PySide6.QtGui import QPalette, QColor, QFont, QFontDatabase, QPainter, QPen, QIcon, QAction
@@ -319,7 +320,16 @@ class MainWindow(QMainWindow):
         self.animations = config["animations"]
         # Rebuilds the layer list and repaints via _on_layers_changed (once init_ui has subscribed it)
         self.layer_set.replace(config["layers"], config["active_layer"])
+        for i, color in enumerate(config_store.custom_colors(config)):
+            QColorDialog.setCustomColor(i, QColor(color))
         if dirty:
+            self.mark_dirty()
+
+    def _sync_custom_colors(self):
+        """Save the color picker's custom slots if a picker changed them (they live in QColorDialog)."""
+        current = [QColorDialog.customColor(i).name() for i in range(config_store.CUSTOM_COLOR_SLOTS)]
+        if current != config_store.custom_colors(self.config):
+            config_store.ui_settings(self.config)['custom_colors'] = current
             self.mark_dirty()
 
     def show_help(self):
@@ -758,7 +768,9 @@ class MainWindow(QMainWindow):
         frame = frames[idx]
         # Use the enhanced color picker with intensity
         picker = ColorPickerPopup(initial_color=None, original_color=None, parent=self, initial_intensity="medium")
-        if picker.exec() == QDialog.Accepted:
+        accepted = picker.exec() == QDialog.Accepted
+        self._sync_custom_colors()
+        if accepted:
             sel = picker.get_selected_color()
             if sel:
                 inten = picker.get_selected_intensity()
@@ -1396,7 +1408,9 @@ class MainWindow(QMainWindow):
     def edit_pad(self, pad):
         mapping = self.get_pad_mapping(pad)
         dlg = PadEditorDialog(pad, mapping, self, animation_names=sorted(self.animations.keys()))
-        if dlg.exec() == QDialog.Accepted:
+        accepted = dlg.exec() == QDialog.Accepted
+        self._sync_custom_colors()
+        if accepted:
             pads = self.layer_set.active_pads
             new_map = dlg.result_mapping()
             if new_map is None:

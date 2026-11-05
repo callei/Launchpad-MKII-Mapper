@@ -15,7 +15,7 @@ from pathlib import Path
 
 import yaml
 
-from launchpad.mapping import ANIMATION, normalize_types
+from launchpad.mapping import _HEX_COLOR, ANIMATION, normalize_types
 
 _DEFAULT_NAV_PADS = {
     "2,-1": {"type": "layer nav", "nav": "prev", "color": "#2980b9"},
@@ -39,6 +39,18 @@ def ui_settings(config: dict) -> dict:
     if not isinstance(ui, dict):
         ui = config["ui"] = {}
     return ui
+
+
+CUSTOM_COLOR_SLOTS = 16
+EMPTY_CUSTOM_COLOR = "#ffffff"  # what Qt's color dialog shows in an unused slot
+
+
+def custom_colors(config: dict) -> list[str]:
+    """The color picker's saved custom colors (ui.custom_colors): 16 "#rrggbb" slots, invalid ones empty."""
+    saved = ui_settings(config).get("custom_colors")
+    saved = saved if isinstance(saved, list) else []
+    colors = [c.lower() if isinstance(c, str) and _HEX_COLOR.fullmatch(c) else EMPTY_CUSTOM_COLOR for c in saved]
+    return (colors + [EMPTY_CUSTOM_COLOR] * CUSTOM_COLOR_SLOTS)[:CUSTOM_COLOR_SLOTS]
 
 
 def sanitize_name(raw: str) -> str:

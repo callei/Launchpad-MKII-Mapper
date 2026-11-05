@@ -120,3 +120,16 @@ def test_hold_is_disabled_for_looping_animations(editor):
     assert not dlg.animation_hold.isEnabled()
     dlg.animation_loop_iterations.setValue(3)
     assert dlg.animation_hold.isEnabled()
+
+
+def test_clear_saved_colors_empties_every_slot(qapp, monkeypatch):
+    import widgets
+    from PySide6.QtGui import QColor
+    from PySide6.QtWidgets import QColorDialog
+
+    monkeypatch.setattr(widgets, "ask_yes_no", lambda *a: True)
+    QColorDialog.setCustomColor(0, QColor("#abcdef"))
+    picker = widgets.ColorPickerPopup(None, None)
+    picker.clear_saved_btn.click()
+    assert {QColorDialog.customColor(i).name() for i in range(16)} == {"#ffffff"}
+    picker.deleteLater()

@@ -266,11 +266,14 @@ class ColorPickerPopup(FramelessPopup):
         btn_row = QHBoxLayout()
         self.clear_btn = QPushButton("Clear")
         self.store_current_btn = QPushButton("Store Color → Slot…")
+        self.clear_saved_btn = QPushButton("Clear Saved Colors")
+        self.clear_saved_btn.setToolTip("Empty every custom color slot")
         # Custom clear OK/Cancel buttons (built-in ones are no longer removed/moved dynamically)
         self.ok_btn = QPushButton("OK")
         self.cancel_btn = QPushButton("Cancel")
         btn_row.addWidget(self.clear_btn)
         btn_row.addWidget(self.store_current_btn)
+        btn_row.addWidget(self.clear_saved_btn)
         btn_row.addStretch(1)
         btn_row.addWidget(self.ok_btn)
         btn_row.addWidget(self.cancel_btn)
@@ -278,6 +281,7 @@ class ColorPickerPopup(FramelessPopup):
         self._btn_row = btn_row  # kept for backward compatibility (if we later want to reuse relocation)
         self.clear_btn.clicked.connect(self._clear_color)
         self.store_current_btn.clicked.connect(self._store_current)
+        self.clear_saved_btn.clicked.connect(self._clear_saved_colors)
         self.ok_btn.clicked.connect(self._accept)
         self.cancel_btn.clicked.connect(self.reject)
         # For safety: catch double clicks in the color box etc
@@ -340,6 +344,14 @@ class ColorPickerPopup(FramelessPopup):
         slot, ok = QInputDialog.getInt(self, "Custom Color Slot", "Slot (1-16):", 1, 1, 16, 1)
         if ok:
             QColorDialog.setCustomColor(slot - 1, col)
+
+    def _clear_saved_colors(self):
+        if not ask_yes_no(self, "Clear Saved Colors", "Empty all 16 custom color slots?"):
+            return
+        for i in range(QColorDialog.customCount()):
+            QColorDialog.setCustomColor(i, QColor("#ffffff"))
+        for w in self._dlg.findChildren(QWidget):  # the slot grid doesn't repaint by itself
+            w.update()
 
     def _accept(self):
         col = self._dlg.currentColor()
