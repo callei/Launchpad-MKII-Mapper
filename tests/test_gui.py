@@ -462,3 +462,20 @@ def test_mapping_picker_starts_on_the_last_pick_for_an_uncolored_pad(win, monkey
     assert (win._last_color, win._last_intensity) == ("#00ff00", "high")
     win.edit_pad((0, 0))  # now colored: starts on its own color
     assert _FakePicker.opened[-1] == ("#00ff00", "high")
+
+
+def test_typing_a_frame_duration_does_not_crash(win, qapp):
+    from PySide6.QtTest import QTest
+
+    win.animations["a"] = {"frames": [{"duration": 300, "pads": {}}, {"duration": 300, "pads": {}}]}
+    win.animation_list.addItem("a")
+    win.animation_list.setCurrentRow(win.animation_list.count() - 1)
+    win.frame_list.setCurrentRow(1)
+    spin = win.frame_duration_spin
+    spin.lineEdit().selectAll()
+    QTest.keyClicks(spin, "1500")  # this used to overflow the stack and kill the app
+    qapp.processEvents()
+    assert [f["duration"] for f in win.animations["a"]["frames"]] == [300, 1500]
+    assert win.frame_list.currentRow() == 1 and win.frame_list.item(1).text() == "Frame 2 (1500ms)"
+    win.frame_list.setCurrentRow(0)  # selecting a frame shows its duration without editing it
+    assert spin.value() == 300 and win.animations["a"]["frames"][1]["duration"] == 1500

@@ -739,7 +739,10 @@ class MainWindow(QMainWindow):
         if self.current_animation and row >= 0:
             frames = self.animations[self.current_animation]["frames"]
             if row < len(frames):
+                # Showing a frame's duration is not an edit: don't write it back via valueChanged
+                self.frame_duration_spin.blockSignals(True)
                 self.frame_duration_spin.setValue(frames[row].get("duration", 300))
+                self.frame_duration_spin.blockSignals(False)
 
     def _refresh_animation_grid(self):
         # Clear all
@@ -805,8 +808,9 @@ class MainWindow(QMainWindow):
         frames = self.animations[self.current_animation]["frames"]
         if idx < len(frames):
             frames[idx]["duration"] = val
-            self._refresh_frames_list()
-            self.frame_list.setCurrentRow(idx)
+            # Relabel in place: rebuilding the list while the spinbox is being typed in re-entered this
+            # handler through the selection change and overflowed the stack
+            self.frame_list.item(idx).setText(f"Frame {idx + 1} ({val}ms)")
             self.mark_dirty()
 
     def _play_selected_animation(self):
