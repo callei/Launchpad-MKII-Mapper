@@ -1,6 +1,6 @@
 import pytest
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication
 
 ANIMS = ["blink", "wave"]
 
@@ -70,10 +70,11 @@ def test_switching_type_drops_old_fields(editor):
 
 
 def test_animation_without_selection_keeps_dialog_open(qapp, monkeypatch):
+    import widgets
     from widgets import PadEditorDialog
 
     warnings = []
-    monkeypatch.setattr(QMessageBox, "warning", staticmethod(lambda *a, **k: warnings.append(a)))
+    monkeypatch.setattr(widgets, "show_message", lambda *a, **k: warnings.append(a))
     dlg = PadEditorDialog((0, 0), {"type": "animation", "name": "gone"}, None, animation_names=[])
     QTimer.singleShot(0, dlg.accept)  # no animation to select: refused, so reject to end exec()
     QTimer.singleShot(0, dlg.reject)

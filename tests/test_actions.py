@@ -168,12 +168,10 @@ def test_pad_press_hotkey_sequence_does_not_block(win):
     assert calls[2:] == [("down", 0x75), ("up", 0x75)]
 
 
-def test_failing_action_reports_in_status_bar_not_a_dialog(win, monkeypatch, tmp_path):
-    from PySide6.QtWidgets import QMessageBox
-
+def test_failing_action_reports_in_status_bar_not_a_dialog(win, lpm, monkeypatch, tmp_path):
     dialogs = []
-    for name in ("information", "warning", "question", "critical"):
-        monkeypatch.setattr(QMessageBox, name, staticmethod(lambda *a, **k: dialogs.append(a)))
+    for name in ("show_message", "ask_yes_no"):
+        monkeypatch.setattr(lpm, name, lambda *a, **k: dialogs.append(a))
     balloons = []
     win.tray = type("Tray", (), {"showMessage": lambda self, *a: balloons.append(a)})()
     win.layers["main"]["pads"]["0,0"] = {"type": "launch app", "path": str(tmp_path / "gone.exe")}

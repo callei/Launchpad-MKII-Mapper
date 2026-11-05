@@ -163,20 +163,16 @@ def _virtual_controller(reason):
 
 
 def test_manual_connect_explains_virtual_mode(win, lpm, monkeypatch):
-    from PySide6.QtWidgets import QMessageBox
-
     shown = []
-    monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda parent, title, text: shown.append(text)))
+    monkeypatch.setattr(lpm, "show_message", lambda parent, title, text: shown.append(text))
     monkeypatch.setattr(lpm, "LaunchpadController", _virtual_controller("port busy"))
     win.init_midi(auto=False)
     assert len(shown) == 1 and "port busy" in shown[0]
 
 
 def test_auto_connect_reports_virtual_mode_in_status_bar_only(win, lpm, monkeypatch):
-    from PySide6.QtWidgets import QMessageBox
-
     shown = []
-    monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a: shown.append(a)))
+    monkeypatch.setattr(lpm, "show_message", lambda *a: shown.append(a))
     monkeypatch.setattr(lpm, "LaunchpadController", _virtual_controller("port busy"))
     win.init_midi(auto=True)
     assert shown == []
@@ -237,7 +233,7 @@ def test_add_and_delete_layer_trigger_autosave(win, monkeypatch):
     assert dirty == [1]
     assert win.active_layer == "extra" and win.layer_list.currentItem().text() == "extra"
     assert win.get_pad_mapping((3, -1))["type"] == "layer nav"
-    win.delete_current_layer()  # QMessageBox.question is patched to Yes
+    win.delete_current_layer()  # ask_yes_no is patched to Yes
     assert "extra" not in win.layers and dirty == [1, 1]
     assert win.active_layer == "main" and win.layer_list.count() == 1
 
@@ -262,7 +258,7 @@ def test_renamed_running_animation_still_toggles(win, monkeypatch):
 
 def test_deleting_running_animation_stops_it(win):
     _start_looping(win, "blink")
-    win._delete_animation()  # QMessageBox.question is patched to Yes
+    win._delete_animation()  # ask_yes_no is patched to Yes
     assert win.anim.running == []
     assert win.port.controller.colors[-1] == ((0, 0), (0, 0, 0))  # its pad is restored
 
@@ -304,12 +300,20 @@ def test_unplug_is_reported_and_replug_repaints_every_pad(win):
 def test_about_shows_version_and_author_without_a_message_box(win, lpm, monkeypatch):
     import tomllib
 
-    from PySide6.QtWidgets import QLabel, QMessageBox
+    from PySide6.QtWidgets import QLabel
 
     version = tomllib.loads((lpm.PROJECT_ROOT / "pyproject.toml").read_text())["project"]["version"]
     texts = []
     monkeypatch.setattr(lpm.QDialog, "exec", lambda dlg: texts.extend(lbl.text() for lbl in dlg.findChildren(QLabel)))
-    monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a, **k: texts.append("message box")))
+    monkeypatch.setattr(lpm, "show_message", lambda *a, **k: texts.append("message box"))
     win.show_help()
     (text,) = texts
     assert f"Version {version}" in text and "https://github.com/callei" in text
+
+
+def test_ask_yes_no_is_a_silent_popup_not_a_message_box(qapp):
+    import widgets
+
+    for button, expected in (("accept", True), ("reject", False)):
+        QTimer.singleShot(0, lambda b=button: getattr(QApplication.activeModalWidget(), b)())
+        assert widgets.ask_yes_no(None, "Delete", "Sure?") is expected

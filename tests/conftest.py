@@ -110,14 +110,12 @@ def lpm(monkeypatch):
 def win(qapp, lpm, monkeypatch):
     import shutil
 
-    from PySide6.QtWidgets import QMessageBox
-
     # Fresh app data per window: earlier tests' autosaves must not leak into the next one
     shutil.rmtree(lpm.APPDATA_DIR, ignore_errors=True)
     lpm.APPDATA_DIR.mkdir(parents=True)
 
-    for name in ("information", "warning", "question", "critical"):
-        monkeypatch.setattr(QMessageBox, name, staticmethod(lambda *a, **k: QMessageBox.Yes))
+    monkeypatch.setattr(lpm, "show_message", lambda *a, **k: None)
+    monkeypatch.setattr(lpm, "ask_yes_no", lambda *a, **k: True)
     w = lpm.MainWindow()
     w.init_midi(auto=True)
     qapp.processEvents()

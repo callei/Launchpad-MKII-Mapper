@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
     QListWidget,
     QHBoxLayout,
     QFileDialog,
-    QMessageBox,
     QDialog,
     QInputDialog,
     QTabWidget,
@@ -41,6 +40,8 @@ from widgets import (  # noqa: E402
     SettingsPopup,
     TextInputPopup,
     PadEditorDialog,
+    show_message,
+    ask_yes_no,
 )
 
 # Main GUI module for Launchpad Mapper!
@@ -285,9 +286,9 @@ class MainWindow(QMainWindow):
             try:
                 config_store.export_file(self.config, fname)
             except Exception as e:
-                QMessageBox.warning(self, "Export", f"Failed to export: {e}")
+                show_message(self, "Export", f"Failed to export: {e}")
                 return
-            QMessageBox.information(self, "Exported", f"Config exported to {fname}")
+            show_message(self, "Exported", f"Config exported to {fname}")
 
     def import_config(self):
         self._load_config_file("Import Config", "YAML Files (*.yaml);;JSON Files (*.json)")
@@ -301,7 +302,7 @@ class MainWindow(QMainWindow):
             return
         result = self.store.load(fname)
         if not result.loaded:
-            QMessageBox.warning(self, title, "\n".join(result.problems))
+            show_message(self, title, "\n".join(result.problems))
             return
         self._apply_config(result.config)
 
@@ -574,7 +575,7 @@ class MainWindow(QMainWindow):
             return
         n = name.strip()
         if n in self.animations:
-            QMessageBox.warning(self, "Animation", "Name exists.")
+            show_message(self, "Animation", "Name exists.")
             return
         self.animations[n] = {"frames": []}
         self.animation_list.addItem(n)
@@ -595,7 +596,7 @@ class MainWindow(QMainWindow):
         if new_name == old:
             return
         if new_name in self.animations:
-            QMessageBox.warning(self, "Animation", "Name already exists.")
+            show_message(self, "Animation", "Name already exists.")
             return
         # Move frames data
         data = self.animations.pop(old)
@@ -622,10 +623,7 @@ class MainWindow(QMainWindow):
     def _delete_animation(self):
         if not self.current_animation:
             return
-        reply = QMessageBox.question(
-            self, "Delete Animation", f"Delete '{self.current_animation}'?", QMessageBox.Yes | QMessageBox.No
-        )
-        if reply != QMessageBox.Yes:
+        if not ask_yes_no(self, "Delete Animation", f"Delete '{self.current_animation}'?"):
             return
         self.animations.pop(self.current_animation, None)
         # A deleted loop-forever animation could otherwise never be stopped
@@ -820,9 +818,9 @@ class MainWindow(QMainWindow):
             return
         try:
             config_store.export_file(self.animations, fname)
-            QMessageBox.information(self, "Animations", f"Exported animations to {fname}")
+            show_message(self, "Animations", f"Exported animations to {fname}")
         except Exception as e:
-            QMessageBox.warning(self, "Animations", f"Failed to export: {e}")
+            show_message(self, "Animations", f"Failed to export: {e}")
 
     def _import_animations(self):
         fname, _ = QFileDialog.getOpenFileName(self, "Import Animations", str(PROJECT_ROOT), "YAML Files (*.yaml)")
@@ -835,9 +833,9 @@ class MainWindow(QMainWindow):
             # Refresh animations list in UI
             self.animation_list.clear()
             self.animation_list.addItems(sorted(self.animations.keys()))
-            QMessageBox.information(self, "Animations", f"Imported animations from {fname}")
+            show_message(self, "Animations", f"Imported animations from {fname}")
         except Exception as e:
-            QMessageBox.warning(self, "Animations", f"Failed to import: {e}")
+            show_message(self, "Animations", f"Failed to import: {e}")
 
     def apply_theme(self):
         """Apply the 'Minimalistic Black' theme globally so popups match the main window."""
@@ -914,23 +912,20 @@ class MainWindow(QMainWindow):
             return
         # New layers start with the default nav pads and become active (list and grid follow the model)
         if not self.layer_set.add(name.strip()):
-            QMessageBox.warning(self, "Layer", "Layer already exists.")
+            show_message(self, "Layer", "Layer already exists.")
             return
         self.mark_dirty()
 
     def delete_current_layer(self):
         current = self.active_layer
         if current == "main":
-            QMessageBox.warning(self, "Layer", "Cannot delete the primary 'main' layer.")
+            show_message(self, "Layer", "Cannot delete the primary 'main' layer.")
             return
-        reply = QMessageBox.question(
-            self, "Delete Layer", f"Delete layer '{current}'?", QMessageBox.Yes | QMessageBox.No
-        )
-        if reply != QMessageBox.Yes:
+        if not ask_yes_no(self, "Delete Layer", f"Delete layer '{current}'?"):
             return
         # Falls back to 'main' (else the first layer); the model refuses to delete the last layer
         if not self.layer_set.delete(current):
-            QMessageBox.warning(self, "Layer", "Cannot delete the last layer.")
+            show_message(self, "Layer", "Cannot delete the last layer.")
             return
         self.mark_dirty()
 
@@ -971,7 +966,7 @@ class MainWindow(QMainWindow):
     def init_midi(self, auto: bool = False):
         if not LaunchpadController:
             if not auto:
-                QMessageBox.warning(
+                show_message(
                     self,
                     "MIDI",
                     "Launchpad backend not available. Install dependencies:\npip install mido python-rtmidi",
@@ -981,7 +976,7 @@ class MainWindow(QMainWindow):
         self._port_poll_timer.start()
         if self.port.state == lp_port.VIRTUAL and not auto:
             # Only on explicit Connect/Reconnect; the automatic attempt at startup (possibly hidden) stays quiet
-            QMessageBox.information(
+            show_message(
                 self,
                 "Launchpad",
                 f"{self.port.reason}\n\nRunning in virtual mode. Plugging the Launchpad in reconnects it; "
@@ -1118,7 +1113,7 @@ class MainWindow(QMainWindow):
                 if sys.platform == 'win32':
                     ok = self._update_autostart_registry(ui['autostart_enabled'])
                     if not ok and ui['autostart_enabled']:
-                        QMessageBox.warning(self, 'Autostart', 'Failed to update Windows autostart registry.')
+                        show_message(self, 'Autostart', 'Failed to update Windows autostart registry.')
                 self.save_config(silent=True)
                 # Apply mode immediately
                 if not ui['autostart_enabled']:
@@ -1137,7 +1132,7 @@ class MainWindow(QMainWindow):
                     self.hide()
                 self.statusBar().showMessage('Settings saved.', 4000)
             except Exception as e:
-                QMessageBox.warning(self, 'Settings', f'Failed to save settings: {e}')
+                show_message(self, 'Settings', f'Failed to save settings: {e}')
 
     def _update_autostart_registry(self, enable: bool) -> bool:
         if sys.platform != 'win32':
@@ -1199,10 +1194,10 @@ class MainWindow(QMainWindow):
             return
         safe = config_store.sanitize_name(name)
         if not safe:
-            QMessageBox.warning(self, "Preset", "Invalid name.")
+            show_message(self, "Preset", "Invalid name.")
             return
         if self.store.has_preset(safe):
-            QMessageBox.warning(self, "Preset", "Preset already exists.")
+            show_message(self, "Preset", "Preset already exists.")
             return
         # Start from blank current layer (preserving other layers)
         # Keep navigation pads if already present, otherwise seed them; clear all other pads for this layer only
@@ -1219,7 +1214,7 @@ class MainWindow(QMainWindow):
         try:
             self.store.write_preset(self.current_preset_name, self.active_layer, pads, self.animations)
         except Exception as e:
-            QMessageBox.warning(self, "Preset", f"Failed to save preset: {e}")
+            show_message(self, "Preset", f"Failed to save preset: {e}")
             return False
         return True
 
@@ -1236,31 +1231,25 @@ class MainWindow(QMainWindow):
             return
         safe = config_store.sanitize_name(name)
         if not safe:
-            QMessageBox.warning(self, "Preset", "Invalid name.")
+            show_message(self, "Preset", "Invalid name.")
             return
         self.current_preset_name = safe
         self.save_current_preset()
 
     def delete_current_preset(self):
         if not self.current_preset_name:
-            QMessageBox.information(self, "Preset", "No preset loaded.")
+            show_message(self, "Preset", "No preset loaded.")
             return
         # Enforce at least one preset existing
         if len(self.store.list_presets()) <= 1:
-            QMessageBox.warning(self, "Preset", "Cannot delete the last remaining preset.")
+            show_message(self, "Preset", "Cannot delete the last remaining preset.")
             return
-        reply = QMessageBox.question(
-            self,
-            "Delete Layer Preset",
-            f"Delete preset '{self.current_preset_name}'?",
-            QMessageBox.Yes | QMessageBox.No,
-        )
-        if reply != QMessageBox.Yes:
+        if not ask_yes_no(self, "Delete Layer Preset", f"Delete preset '{self.current_preset_name}'?"):
             return
         try:
             self.store.delete_preset(self.current_preset_name)
         except Exception as e:
-            QMessageBox.warning(self, "Preset", f"Could not delete: {e}")
+            show_message(self, "Preset", f"Could not delete: {e}")
             return
         deleted = self.current_preset_name
         self.current_preset_name = None
@@ -1281,7 +1270,7 @@ class MainWindow(QMainWindow):
         try:
             name = self.store.import_preset(fname)
         except Exception as e:
-            QMessageBox.warning(self, "Import", str(e))
+            show_message(self, "Import", str(e))
             return
         self.load_preset(name)
         self.statusBar().showMessage(f"Imported layer preset '{name}'", 4000)
@@ -1294,10 +1283,10 @@ class MainWindow(QMainWindow):
         try:
             preset = self.store.read_preset(name, current_layer=self.active_layer)
         except UnsafePresetName as e:
-            QMessageBox.warning(self, "Security Error", str(e))
+            show_message(self, "Security Error", str(e))
             return
         except PresetError as e:
-            QMessageBox.warning(self, "Preset", str(e))
+            show_message(self, "Preset", str(e))
             return
         self._stop_animation_playback()
         # Merge embedded animations (if present) into global animations set
@@ -1440,10 +1429,10 @@ class MainWindow(QMainWindow):
             self.store.save(self.config)
             self._dirty = False
             if not silent:
-                QMessageBox.information(self, "Saved", f"Config saved to {self.store.config_path}")
+                show_message(self, "Saved", f"Config saved to {self.store.config_path}")
         except Exception as e:
             if not silent:
-                QMessageBox.warning(self, "Save", f"Failed to save config: {e}")
+                show_message(self, "Save", f"Failed to save config: {e}")
             else:
                 self.statusBar().showMessage(f"Autosave failed: {e}", 8000)
 

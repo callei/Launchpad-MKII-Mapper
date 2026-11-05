@@ -3,7 +3,7 @@ import shutil
 import pytest
 import yaml
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication
 
 
 @pytest.fixture
@@ -11,8 +11,8 @@ def make_win(qapp, lpm, monkeypatch):
     """Build a MainWindow on top of whatever config.yaml the test wrote first."""
     shutil.rmtree(lpm.APPDATA_DIR, ignore_errors=True)
     lpm.PRESETS_DIR.mkdir(parents=True)
-    for name in ("information", "warning", "question", "critical"):
-        monkeypatch.setattr(QMessageBox, name, staticmethod(lambda *a, **k: QMessageBox.Yes))
+    monkeypatch.setattr(lpm, "show_message", lambda *a, **k: None)
+    monkeypatch.setattr(lpm, "ask_yes_no", lambda *a, **k: True)
     made = []
 
     def _make():

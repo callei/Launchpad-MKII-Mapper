@@ -18,7 +18,6 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QSpinBox,
     QCheckBox,
-    QMessageBox,
 )
 from PySide6.QtCore import Qt, Signal, QPoint, QTimer, QThread
 from PySide6.QtGui import QColor, QPainterPath, QRegion
@@ -199,6 +198,30 @@ class FramelessPopup(QDialog):
     def _title_mouse_release(self, event):
         self._drag_pos = None
         event.accept()
+
+
+class MessagePopup(FramelessPopup):
+    """Message or yes/no question in our popup style. Unlike QMessageBox it plays no Windows sound."""
+
+    def __init__(self, title: str, text: str, parent=None, question: bool = False):
+        super().__init__(title=title, parent=parent)
+        lay = self.content_layout()
+        label = QLabel(text)
+        label.setWordWrap(True)
+        label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        lay.addWidget(label)
+        btns = QDialogButtonBox(QDialogButtonBox.Yes | QDialogButtonBox.No if question else QDialogButtonBox.Ok)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        lay.addWidget(btns)
+
+
+def show_message(parent, title: str, text: str) -> None:
+    MessagePopup(title, text, parent).exec()
+
+
+def ask_yes_no(parent, title: str, text: str) -> bool:
+    return MessagePopup(title, text, parent, question=True).exec() == QDialog.Accepted
 
 
 class ColorPickerPopup(FramelessPopup):
@@ -943,7 +966,7 @@ class PadEditorDialog(FramelessPopup):
 
     def accept(self):
         if self.action_type.currentText() == padmap.ANIMATION and not self.animation_select.currentText():
-            QMessageBox.warning(self, "Animation", "Select an animation.")
+            show_message(self, "Animation", "Select an animation.")
             return
         super().accept()
 
