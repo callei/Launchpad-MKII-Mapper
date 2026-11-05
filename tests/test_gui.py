@@ -327,3 +327,22 @@ def test_clear_layer_button_repaints_and_autosaves(win, monkeypatch):
     win.clear_layer_btn.click()  # ask_yes_no is patched to Yes
     assert "0,0" not in win.layers["main"]["pads"] and dirty == [1]
     assert ((0, 0), (0, 0, 0)) in win.port.controller.colors
+
+
+def test_animation_export_starts_outside_the_install_dir(win, lpm, monkeypatch):
+    starts = []
+    monkeypatch.setattr(lpm.QFileDialog, "getSaveFileName", staticmethod(lambda *a: starts.append(a[2]) or ("", "")))
+    monkeypatch.setattr(lpm.QFileDialog, "getOpenFileName", staticmethod(lambda *a: starts.append(a[2]) or ("", "")))
+    win._export_animations()
+    win._import_animations()
+    assert len(starts) == 2
+    assert all(not s.startswith(str(lpm.PROJECT_ROOT)) for s in starts)
+
+
+def test_animation_export_explains_a_protected_folder(win, lpm, monkeypatch, tmp_path):
+    shown = []
+    monkeypatch.setattr(lpm, "show_message", lambda parent, title, text: shown.append(text))
+    monkeypatch.setattr(lpm.QFileDialog, "getSaveFileName", staticmethod(lambda *a: (str(tmp_path / "a.yaml"), "")))
+    monkeypatch.setattr(lpm.config_store, "export_file", lambda *a: (_ for _ in ()).throw(PermissionError()))
+    win._export_animations()
+    assert len(shown) == 1 and "No permission" in shown[0]

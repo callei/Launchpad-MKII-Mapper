@@ -108,6 +108,12 @@ _EXE_DIR = Path(sys.executable).resolve().parent
 PRESET_SEED_DIRS = [PROJECT_ROOT / 'presets', _EXE_DIR / 'presets', _EXE_DIR / '_internal' / 'presets']
 
 
+def user_files_dir() -> Path:
+    """Where export/import dialogs start: Documents, not the install dir (Program Files needs admin)."""
+    docs = Path.home() / 'Documents'
+    return docs if docs.is_dir() else Path.home()
+
+
 def app_version() -> str:
     """pyproject.toml's version; a frozen exe reads its own version resource (build_exe.ps1 sets it from there)."""
     try:
@@ -819,18 +825,24 @@ class MainWindow(QMainWindow):
 
     def _export_animations(self):
         fname, _ = QFileDialog.getSaveFileName(
-            self, "Export Animations", str(PROJECT_ROOT / "animations.yaml"), "YAML Files (*.yaml)"
+            self, "Export Animations", str(user_files_dir() / "animations.yaml"), "YAML Files (*.yaml)"
         )
         if not fname:
             return
         try:
             config_store.export_file(self.animations, fname)
             show_message(self, "Animations", f"Exported animations to {fname}")
+        except PermissionError:
+            show_message(
+                self,
+                "Animations",
+                f"No permission to write to {Path(fname).parent}.\n\nPick a folder you own, such as Documents.",
+            )
         except Exception as e:
             show_message(self, "Animations", f"Failed to export: {e}")
 
     def _import_animations(self):
-        fname, _ = QFileDialog.getOpenFileName(self, "Import Animations", str(PROJECT_ROOT), "YAML Files (*.yaml)")
+        fname, _ = QFileDialog.getOpenFileName(self, "Import Animations", str(user_files_dir()), "YAML Files (*.yaml)")
         if not fname:
             return
         try:
