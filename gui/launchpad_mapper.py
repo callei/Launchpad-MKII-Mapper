@@ -566,6 +566,19 @@ class MainWindow(QMainWindow):
             self.anim_pad_buttons[pad] = btn
         self.anim_grid_widget.setLayout(g)
         right.addWidget(self.anim_grid_widget)
+        # Paint mode: clicks apply the brush directly (clicking a pad that already has it clears it)
+        paint_row = QHBoxLayout()
+        self.paint_btn = QPushButton("Paint")
+        self.paint_btn.setCheckable(True)
+        self.paint_btn.setToolTip("Click pads to give them the brush color; click again to clear")
+        self.brush_btn = QPushButton()
+        self.brush_btn.setToolTip("Pick the brush color and strength")
+        self.brush_btn.clicked.connect(self._pick_brush)
+        paint_row.addWidget(self.paint_btn)
+        paint_row.addWidget(self.brush_btn, 1)
+        right.addLayout(paint_row)
+        self._brush = ("#ff0000", "high")
+        self._show_brush()
         play_row = QHBoxLayout()
         self.play_anim_btn = QPushButton("Play")
         self.play_anim_btn.clicked.connect(self._play_selected_animation)
@@ -772,6 +785,9 @@ class MainWindow(QMainWindow):
         if idx >= len(frames):
             return
         frame = frames[idx]
+        if self.paint_btn.isChecked():
+            self._paint_animation_pad(frame, pad)
+            return
         # Start on this pad's color, else on the last color picked
         cell = frame.get("pads", {}).get(pad_key(pad))
         if isinstance(cell, dict) and cell.get("color"):
@@ -798,6 +814,35 @@ class MainWindow(QMainWindow):
         self._refresh_frames_list()
         self.frame_list.setCurrentRow(idx)
         self.mark_dirty()
+
+    def _paint_animation_pad(self, frame, pad):
+        pads = frame.setdefault("pads", {})
+        color, inten = self._brush
+        brush_cell = {"color": color, "intensity": inten}
+        if pads.get(pad_key(pad)) == brush_cell:
+            pads.pop(pad_key(pad))
+        else:
+            pads[pad_key(pad)] = brush_cell
+        self._refresh_animation_grid()
+        self.mark_dirty()
+
+    def _pick_brush(self):
+        color, inten = self._brush
+        picker = ColorPickerPopup(initial_color=color, original_color=color, parent=self, initial_intensity=inten)
+        accepted = picker.exec() == QDialog.Accepted
+        self._sync_custom_colors()
+        if accepted and picker.get_selected_color():
+            self._brush = (picker.get_selected_color(), picker.get_selected_intensity())
+            self._last_color, self._last_intensity = self._brush
+            self._show_brush()
+            self.paint_btn.setChecked(True)  # picking a brush means you want to paint
+
+    def _show_brush(self):
+        color, inten = self._brush
+        r, g, b = padmap.color_rgb({"color": color, "intensity": inten}, screen=True)
+        fg = "#000" if (0.299 * r + 0.587 * g + 0.114 * b) > 140 else "#fff"
+        self.brush_btn.setText(f"Brush: {color} · {inten}")
+        self.brush_btn.setStyleSheet(f"background-color: rgb({r},{g},{b}); color: {fg};")
 
     def _update_frame_duration(self, val):
         if not self.current_animation:

@@ -479,3 +479,21 @@ def test_typing_a_frame_duration_does_not_crash(win, qapp):
     assert win.frame_list.currentRow() == 1 and win.frame_list.item(1).text() == "Frame 2 (1500ms)"
     win.frame_list.setCurrentRow(0)  # selecting a frame shows its duration without editing it
     assert spin.value() == 300 and win.animations["a"]["frames"][1]["duration"] == 1500
+
+
+def test_paint_mode_applies_the_brush_without_a_picker(win, lpm, monkeypatch):
+    monkeypatch.setattr(lpm, "ColorPickerPopup", _FakePicker)
+    _FakePicker.opened, _FakePicker.result = [], ("#00ff00", "low")
+    _anim_with_frame(win, {})
+    win.brush_btn.click()  # pick the brush: turns paint mode on
+    assert win.paint_btn.isChecked() and len(_FakePicker.opened) == 1
+    for pad in ((0, 0), (1, 0), (8, 0)):
+        win.anim_pad_buttons[pad].click()
+    pads = win.animations["a"]["frames"][0]["pads"]
+    assert pads == {k: {"color": "#00ff00", "intensity": "low"} for k in ("0,0", "1,0", "8,0")}
+    assert len(_FakePicker.opened) == 1  # no picker per pad
+    win.anim_pad_buttons[(1, 0)].click()  # same brush again: clears it
+    assert "1,0" not in pads
+    win.paint_btn.setChecked(False)
+    win.anim_pad_buttons[(2, 2)].click()  # paint off: the picker opens again
+    assert len(_FakePicker.opened) == 2
