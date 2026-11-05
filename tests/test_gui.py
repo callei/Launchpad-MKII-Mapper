@@ -317,3 +317,13 @@ def test_ask_yes_no_is_a_silent_popup_not_a_message_box(qapp):
     for button, expected in (("accept", True), ("reject", False)):
         QTimer.singleShot(0, lambda b=button: getattr(QApplication.activeModalWidget(), b)())
         assert widgets.ask_yes_no(None, "Delete", "Sure?") is expected
+
+
+def test_clear_layer_button_repaints_and_autosaves(win, monkeypatch):
+    dirty = []
+    monkeypatch.setattr(win, "mark_dirty", lambda: dirty.append(1))
+    win.layers["main"]["pads"]["0,0"] = {"type": "color", "color": "#ff0000"}
+    win.update_grid()
+    win.clear_layer_btn.click()  # ask_yes_no is patched to Yes
+    assert "0,0" not in win.layers["main"]["pads"] and dirty == [1]
+    assert ((0, 0), (0, 0, 0)) in win.port.controller.colors

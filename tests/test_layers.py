@@ -117,3 +117,15 @@ def test_replace_with_empty_layers_creates_main():
 def test_contains(changes):
     layers = _make(changes, "a", "b")
     assert "a" in layers and "nope" not in layers
+
+
+def test_clear_keeps_only_nav_pads():
+    layers = {"main": {"pads": {"0,0": {"type": "color", "color": "#ff0000"}, "2,-1": {"type": "hotkey", "keys": "a"}}}}
+    ls = LayerSet(layers, "main")
+    calls = []
+    ls.subscribe(lambda: calls.append(1))
+    assert ls.clear("main")
+    assert set(ls.active_pads) == {"2,-1", "3,-1"}
+    assert ls.active_pads["2,-1"] == {"type": "hotkey", "keys": "a"}  # a remapped nav pad keeps its mapping
+    assert calls == [1]
+    assert not ls.clear("missing")

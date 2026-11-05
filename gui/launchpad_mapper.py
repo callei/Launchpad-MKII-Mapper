@@ -387,12 +387,18 @@ class MainWindow(QMainWindow):
 
         # Layer management
         layer_btn_row = QHBoxLayout()
-        self.add_layer_btn = QPushButton("Add Layer")
+        self.add_layer_btn = QPushButton("+")
+        self.add_layer_btn.setToolTip("Add layer")
         self.add_layer_btn.clicked.connect(self.add_layer_dialog)
-        self.del_layer_btn = QPushButton("Delete Layer")
+        self.del_layer_btn = QPushButton("−")
+        self.del_layer_btn.setToolTip("Delete layer")
         self.del_layer_btn.clicked.connect(self.delete_current_layer)
+        self.clear_layer_btn = QPushButton("⌫")
+        self.clear_layer_btn.setToolTip("Clear layer (keeps the ◀ ▶ layer-nav pads)")
+        self.clear_layer_btn.clicked.connect(self.clear_current_layer)
         layer_btn_row.addWidget(self.add_layer_btn)
         layer_btn_row.addWidget(self.del_layer_btn)
+        layer_btn_row.addWidget(self.clear_layer_btn)
         sidebar.addLayout(layer_btn_row)
 
         # Presets menu button (replaces separate combo & buttons)
@@ -458,6 +464,7 @@ class MainWindow(QMainWindow):
             self.connect_btn,
             self.add_layer_btn,
             self.del_layer_btn,
+            self.clear_layer_btn,
         ]
         for b in shadow_buttons:
             eff = QGraphicsDropShadowEffect(self)
@@ -927,6 +934,13 @@ class MainWindow(QMainWindow):
         if not self.layer_set.delete(current):
             show_message(self, "Layer", "Cannot delete the last layer.")
             return
+        self.mark_dirty()
+
+    def clear_current_layer(self):
+        current = self.active_layer
+        if not ask_yes_no(self, "Clear Layer", f"Remove every pad mapping on layer '{current}'?"):
+            return
+        self.layer_set.clear(current)  # repaints via _on_layers_changed
         self.mark_dirty()
 
     def load_custom_font(self):

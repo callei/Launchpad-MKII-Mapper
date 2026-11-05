@@ -85,6 +85,15 @@ class LayerSet:
         self._notify()
         return True
 
+    def clear(self, name: str) -> bool:
+        """Remove every pad mapping of a layer except the nav pads (kept as mapped, else the defaults)."""
+        if name not in self._layers:
+            return False
+        old = self._layers[name].get("pads", {})
+        self._layers[name]["pads"] = {k: old.get(k, v) for k, v in default_nav_pads().items()}
+        self._notify()
+        return True
+
     def _adopt(self, layers: dict, active: str | None) -> None:
         if not layers:
             layers["main"] = {"pads": {}}
