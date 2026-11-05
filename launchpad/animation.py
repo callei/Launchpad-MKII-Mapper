@@ -7,7 +7,15 @@ The engine plays any number of runs at once. The caller passes the current time 
 
 from typing import NamedTuple
 
-from launchpad.mapping import color_rgb, parse_pad_key, to_int
+from launchpad.mapping import (
+    HOLD_CLEAR,
+    HOLD_FOREVER,
+    HOLD_UNTIL_ANIMATION,
+    HOLD_UNTIL_PRESS,
+    color_rgb,
+    parse_pad_key,
+    to_int,
+)
 
 DEFAULT_FRAME_MS = 300
 
@@ -37,10 +45,12 @@ def _compile(frames) -> list[tuple[int, dict[Pad, RGB]]]:
 
 
 class _Run:
-    def __init__(self, name: str, frames: list, cycles: int | None, now: float):
+    def __init__(self, name: str, frames: list, cycles: int | None, now: float, hold: str = HOLD_CLEAR):
         self.name = name
         self.frames = frames
         self.cycles_left = cycles  # None: loop forever
+        self.hold = hold
+        self.held = False  # finished, still showing its last frame
         self.index = 0
         self.frame_end = now + frames[0][0]
 
@@ -60,6 +70,7 @@ class _Run:
                 if self.cycles_left is not None:
                     self.cycles_left -= 1
                     if self.cycles_left <= 0:
+                        self.index = len(self.frames) - 1  # a held run keeps showing the last frame
                         return False
                 self.index = 0
             self.frame_end += self.frames[self.index][0]
@@ -75,13 +86,20 @@ class AnimationEngine:
     @property
     def running(self) -> list[str]:
         """Names of the runs still playing, in start order."""
-        return [run.name for run in self._runs]
+        return [run.name for run in self._runs if not run.held]
 
-    def start(self, name: str, frames, iterations, now: float) -> None:
+    @property
+    def held(self) -> list[str]:
+        """Names of finished runs still showing their last frame, in start order."""
+        return [run.name for run in self._runs if run.held]
+
+    def start(self, name: str, frames, iterations, now: float, hold: str = HOLD_CLEAR) -> None:
         """Play `frames` `iterations` times (0 or less: loop forever) from `now`.
 
         Starting a loop-forever animation whose loop-forever run is already playing stops that run
-        instead (a pad press toggles it). Animations without frames don't start.
+        instead (a pad press toggles it). Likewise, starting with hold "forever" while that animation's
+        last frame is held forever only clears it. Any start ends holds "until next animation" and
+        replaces held runs of the same name. Animations without frames don't start.
         """
         iterations = to_int(iterations, 1)
         if iterations <= 0:
@@ -89,12 +107,28 @@ class AnimationEngine:
             if looping:
                 self._runs = [run for run in self._runs if run not in looping]
                 return
+        if hold == HOLD_FOREVER:
+            held = [run for run in self._runs if run.held and run.name == name and run.hold == HOLD_FOREVER]
+            if held:
+                self._runs = [run for run in self._runs if run not in held]
+                return
         compiled = _compile(frames)
-        if compiled:
-            self._runs.append(_Run(name, compiled, None if iterations <= 0 else iterations, now))
+        if not compiled:
+            return
+        self._runs = [
+            run for run in self._runs if not (run.held and (run.name == name or run.hold == HOLD_UNTIL_ANIMATION))
+        ]
+        self._runs.append(_Run(name, compiled, None if iterations <= 0 else iterations, now, hold))
+
+    def release_press_holds(self) -> bool:
+        """A pad was pressed: clear holds "until press". True if anything was cleared."""
+        kept = [run for run in self._runs if not (run.held and run.hold == HOLD_UNTIL_PRESS)]
+        changed = len(kept) != len(self._runs)
+        self._runs = kept
+        return changed
 
     def stop(self, name: str | None = None) -> None:
-        """Stop the runs of `name`, or every run."""
+        """Stop the runs of `name`, or every run (held ones included)."""
         self._runs = [run for run in self._runs if name is not None and run.name != name]
 
     def rename(self, old: str, new: str) -> None:
@@ -104,9 +138,16 @@ class AnimationEngine:
                 run.name = new
 
     def advance(self, now: float) -> Tick:
-        """Step every run to `now`, drop finished ones, and return what they show."""
-        self._runs = [run for run in self._runs if run.advance(now)]
+        """Step every run to `now`, drop or hold finished ones, and return what they show."""
+        kept = []
+        for run in self._runs:
+            if not run.held and not run.advance(now):
+                if run.hold == HOLD_CLEAR:
+                    continue
+                run.held = True
+            kept.append(run)
+        self._runs = kept
         overlay = {}
         for run in self._runs:
             overlay.update(run.frames[run.index][1])
-        return Tick(overlay, min((run.frame_end for run in self._runs), default=None))
+        return Tick(overlay, min((run.frame_end for run in self._runs if not run.held), default=None))

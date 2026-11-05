@@ -34,6 +34,7 @@ def editor(qapp):
         {"type": "layer nav", "nav": "next", "color": "#8e44ad", "intensity": "medium"},
         {"type": "animation", "name": "wave", "iterations": 0},
         {"type": "animation", "name": "blink", "iterations": 7},
+        {"type": "animation", "name": "blink", "iterations": 2, "hold": "forever"},
         {"type": "color", "color": "#00ff00", "intensity": "high"},
     ],
 )
@@ -112,3 +113,10 @@ def test_edit_pad_removes_empty_pad(win):
     QTimer.singleShot(0, _clear_and_accept)
     win.edit_pad((0, 0))
     assert win.get_pad_mapping((0, 0)) is None
+
+
+def test_hold_is_disabled_for_looping_animations(editor):
+    dlg = editor({"type": "animation", "name": "wave", "iterations": 0})
+    assert not dlg.animation_hold.isEnabled()
+    dlg.animation_loop_iterations.setValue(3)
+    assert dlg.animation_hold.isEnabled()

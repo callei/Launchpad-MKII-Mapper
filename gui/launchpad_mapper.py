@@ -791,11 +791,14 @@ class MainWindow(QMainWindow):
             return
         self._play_animation(self.current_animation, 1)
 
-    def _play_animation(self, name: str, iterations: int):
-        """Start `name` for `iterations` cycles (0 or less: loop; starting a running loop stops it)."""
+    def _play_animation(self, name: str, iterations: int, hold: str = padmap.HOLD_CLEAR):
+        """Start `name` for `iterations` cycles (0 or less: loop; starting a running loop stops it).
+
+        `hold` is what stays lit after the last cycle (see mapping.HOLD_MODES).
+        """
         if name not in self.animations:
             return
-        self.anim.start(name, self.animations[name].get("frames", []), iterations, self._now())
+        self.anim.start(name, self.animations[name].get("frames", []), iterations, self._now(), hold)
         self._animate()
 
     def _stop_animation_playback(self):
@@ -1337,6 +1340,9 @@ class MainWindow(QMainWindow):
     def on_pad_press(self, pad):
         x, y = pad
         mapping = PadMapping.from_dict(self.get_pad_mapping(pad))
+        # Any press ends animation lights held 'until press'
+        if self.anim.release_press_holds():
+            self._animate()
         # Layer changes repaint and move the list selection via _on_layers_changed
         if mapping.type == padmap.LAYER_NAV:
             # Anything but "prev" goes to the next layer (wraps around)
@@ -1352,7 +1358,7 @@ class MainWindow(QMainWindow):
             anim_name = mapping.name
             if anim_name and anim_name in self.animations:
                 # 0=infinite (a press while it loops stops it), 1=single cycle
-                self._play_animation(anim_name, mapping.iterations)
+                self._play_animation(anim_name, mapping.iterations, mapping.hold)
         else:
             result = self.action_runner.run(mapping)
             if not result.ok:

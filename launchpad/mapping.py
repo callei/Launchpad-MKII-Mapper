@@ -21,6 +21,13 @@ COLOR = "color"
 NONE = "none"  # no action; never stored (a mapping without an action is COLOR or removed)
 ACTION_TYPES = (RUN_PROCESS, LAUNCH_APP, HOTKEY, MEDIA_CONTROL, SWITCH_LAYER, LAYER_NAV, ANIMATION)
 
+# What an animation pad leaves lit after its last cycle ends
+HOLD_CLEAR = "clear"  # back to the base colors (default; not stored)
+HOLD_FOREVER = "forever"  # until Stop, quitting, or a press of that animation's pad
+HOLD_UNTIL_PRESS = "until press"  # until any Launchpad press
+HOLD_UNTIL_ANIMATION = "until next animation"  # until any animation starts
+HOLD_MODES = (HOLD_CLEAR, HOLD_FOREVER, HOLD_UNTIL_PRESS, HOLD_UNTIL_ANIMATION)
+
 INTENSITIES = ("low", "medium", "high")
 _INTENSITY_FACTORS = {"low": 0.4, "medium": 0.7, "high": 1.0}
 _LEGACY_INTENSITIES = {1: "low", 2: "medium", 3: "high"}
@@ -127,6 +134,7 @@ class PadMapping:
     nav: str = "prev"  # layer nav: "prev" or "next"
     name: str = ""  # animation
     iterations: int = 1  # animation; 0 or less loops until pressed again
+    hold: str = HOLD_CLEAR  # animation: one of HOLD_MODES
 
     @classmethod
     def from_dict(cls, raw) -> "PadMapping":
@@ -149,6 +157,7 @@ class PadMapping:
             nav=_str(raw.get("nav")) or "prev",
             name=_str(raw.get("name")),
             iterations=to_int(raw.get("iterations", 1), 1),
+            hold=raw["hold"] if raw.get("hold") in HOLD_MODES else HOLD_CLEAR,
         )
 
     def to_dict(self) -> dict | None:
@@ -175,6 +184,8 @@ class PadMapping:
         elif type_ == ANIMATION:
             data["name"] = self.name
             data["iterations"] = self.iterations
+            if self.hold != HOLD_CLEAR:
+                data["hold"] = self.hold
         if self.color:
             data["color"] = self.color
             data["intensity"] = self.intensity

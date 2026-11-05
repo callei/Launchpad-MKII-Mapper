@@ -861,6 +861,20 @@ class PadEditorDialog(FramelessPopup):
         self.animation_loop_container = QWidget()
         self.animation_loop_container.setLayout(loop_iter_row)
         layout.addWidget(self.animation_loop_container)
+        # What stays lit after the last cycle (looping animations never end, so it's disabled for 0)
+        hold_row = QHBoxLayout()
+        hold_row.setContentsMargins(0, 0, 0, 0)
+        hold_row.addWidget(QLabel("After the last frame:"))
+        self.animation_hold = QComboBox()
+        self.animation_hold.addItem("clear the lights", padmap.HOLD_CLEAR)
+        self.animation_hold.addItem("keep it (until Stop or this pad)", padmap.HOLD_FOREVER)
+        self.animation_hold.addItem("keep it until a pad press", padmap.HOLD_UNTIL_PRESS)
+        self.animation_hold.addItem("keep it until another animation", padmap.HOLD_UNTIL_ANIMATION)
+        hold_row.addWidget(self.animation_hold)
+        self.animation_hold_container = QWidget()
+        self.animation_hold_container.setLayout(hold_row)
+        layout.addWidget(self.animation_hold_container)
+        self.animation_loop_iterations.valueChanged.connect(lambda n: self.animation_hold.setEnabled(n > 0))
         # Color button opens enhanced color dialog (includes Use Last / Clear)
         self.color_btn = QPushButton("Pick Color")
         self.color_btn.clicked.connect(self.pick_color)
@@ -909,6 +923,7 @@ class PadEditorDialog(FramelessPopup):
             self.animation_label,
             self.animation_select,
             self.animation_loop_container,
+            self.animation_hold_container,
             args_row_w,
             self.launch_args_label,
             self.launch_args,
@@ -930,6 +945,8 @@ class PadEditorDialog(FramelessPopup):
         if self.animation_select.findText(m.name) >= 0:
             self.animation_select.setCurrentText(m.name)
         self.animation_loop_iterations.setValue(m.iterations)
+        self.animation_hold.setCurrentIndex(max(0, self.animation_hold.findData(m.hold)))
+        self.animation_hold.setEnabled(m.iterations > 0)
         self.selected_color = m.color
         self.intensity_select.setCurrentText(m.intensity)
         self._show_selected_color()
@@ -955,6 +972,7 @@ class PadEditorDialog(FramelessPopup):
             nav=self.nav_select.currentText() or "prev",
             name=self.animation_select.currentText() if type_ == padmap.ANIMATION else "",
             iterations=self.animation_loop_iterations.value(),
+            hold=self.animation_hold.currentData(),
         ).to_dict()
 
     def _clear_pad(self):
@@ -975,6 +993,7 @@ class PadEditorDialog(FramelessPopup):
         self.animation_label.setVisible(is_anim)
         self.animation_select.setVisible(is_anim)
         self.animation_loop_container.setVisible(is_anim)
+        self.animation_hold_container.setVisible(is_anim)
         is_nav = text == padmap.LAYER_NAV
         self.nav_label.setVisible(is_nav)
         self.nav_select.setVisible(is_nav)

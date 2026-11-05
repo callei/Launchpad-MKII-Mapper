@@ -346,3 +346,29 @@ def test_animation_export_explains_a_protected_folder(win, lpm, monkeypatch, tmp
     monkeypatch.setattr(lpm.config_store, "export_file", lambda *a: (_ for _ in ()).throw(PermissionError()))
     win._export_animations()
     assert len(shown) == 1 and "No permission" in shown[0]
+
+
+def test_held_animation_stays_lit_until_its_pad_is_pressed_again(win):
+    win.animations["flash"] = {"frames": [{"duration": 1, "pads": {"0,0": "#ff0000"}}]}
+    win.layers["main"]["pads"]["1,1"] = {"type": "animation", "name": "flash", "iterations": 1, "hold": "forever"}
+    win.on_pad_press((1, 1))
+    _flush_deletes()  # let the 1 ms frame end
+    assert win.anim.held == ["flash"]
+    assert win.port.controller.colors[-1][0] == (0, 0) and win.port.controller.colors[-1][1] != (0, 0, 0)
+    win.on_pad_press((3, -1))  # another pad (layer nav) doesn't end a 'forever' hold
+    assert win.anim.held == ["flash"]
+    win.layer_set.switch_to("main")
+    win.on_pad_press((1, 1))
+    assert win.anim.held == [] and win.anim.running == []
+    assert win.port.controller.colors[-1] == ((0, 0), (0, 0, 0))
+
+
+def test_until_press_hold_ends_on_any_press(win):
+    win.animations["flash"] = {"frames": [{"duration": 1, "pads": {"0,0": "#ff0000"}}]}
+    win.layers["main"]["pads"]["1,1"] = {"type": "animation", "name": "flash", "iterations": 1, "hold": "until press"}
+    win.on_pad_press((1, 1))
+    _flush_deletes()
+    assert win.anim.held == ["flash"]
+    win.on_pad_press((5, 5))  # unmapped pad
+    assert win.anim.held == []
+    assert win.port.controller.colors[-1] == ((0, 0), (0, 0, 0))

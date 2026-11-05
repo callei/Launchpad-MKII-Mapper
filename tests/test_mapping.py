@@ -158,3 +158,10 @@ def test_pad_colors_resolves_intensity_and_skips_junk():
     }
     assert pad_colors(pads) == {(0, 0): (255, 0, 0)}
     assert pad_colors(None) == {}
+
+
+def test_animation_hold_round_trips_and_defaults_to_clear():
+    raw = {"type": "animation", "name": "x", "iterations": 1, "hold": "until press"}
+    assert PadMapping.from_dict(raw).to_dict() == raw
+    assert "hold" not in PadMapping.from_dict({"type": "animation", "name": "x", "hold": "clear"}).to_dict()
+    assert PadMapping.from_dict({"type": "animation", "name": "x", "hold": "bogus"}).hold == "clear"

@@ -188,3 +188,65 @@ def test_failed_write_is_retried_next_paint():
 
 def test_painting_without_a_controller_is_a_no_op():
     LedPainter().paint(base={(0, 0): (1, 1, 1)}, overlay={}, full=True)
+
+
+def _hold_engine(hold, name="a"):
+    eng = AnimationEngine()
+    eng.start(name, frames({"0,0": RED}, {"1,0": GREEN}), 1, now=0, hold=hold)
+    return eng
+
+
+def test_clear_hold_turns_the_pads_off_at_the_end():
+    eng = _hold_engine("clear")
+    assert eng.advance(200).overlay == {} and eng.held == []
+
+
+def test_held_run_keeps_its_last_frame_without_ticking():
+    eng = _hold_engine("forever")
+    tick = eng.advance(200)
+    assert tick.overlay == {(1, 0): color_rgb(GREEN)} and tick.next_due is None
+    assert eng.running == [] and eng.held == ["a"]
+    assert eng.advance(1_000_000).overlay == {(1, 0): color_rgb(GREEN)}
+
+
+def test_forever_hold_is_cleared_by_its_own_pad_then_replays():
+    eng = _hold_engine("forever")
+    eng.advance(200)
+    eng.start("a", frames({"0,0": RED}), 1, now=300, hold="forever")  # press 1: clears only
+    assert eng.advance(300).overlay == {} and eng.held == []
+    eng.start("a", frames({"0,0": RED}), 1, now=400, hold="forever")  # press 2: plays again
+    assert eng.running == ["a"]
+
+
+def test_forever_hold_survives_other_animations_and_presses_but_not_stop():
+    eng = _hold_engine("forever")
+    eng.advance(200)
+    eng.start("b", frames({"5,5": RED}), 1, now=200)
+    assert eng.release_press_holds() is False
+    assert eng.held == ["a"]
+    eng.stop()
+    assert eng.advance(300).overlay == {} and eng.held == []
+
+
+def test_until_press_hold_is_released_by_a_press():
+    eng = _hold_engine("until press")
+    eng.advance(200)
+    eng.start("b", frames({"5,5": RED}), 1, now=200)
+    assert eng.held == ["a"]  # another animation doesn't end it
+    assert eng.release_press_holds() is True
+    assert eng.held == [] and (1, 0) not in eng.advance(200).overlay
+
+
+def test_until_next_animation_hold_ends_when_any_animation_starts():
+    eng = _hold_engine("until next animation")
+    eng.advance(200)
+    assert eng.release_press_holds() is False and eng.held == ["a"]
+    eng.start("b", frames({"5,5": RED}), 1, now=200)
+    assert eng.held == [] and eng.advance(200).overlay == {(5, 5): color_rgb(RED)}
+
+
+def test_replaying_a_held_animation_replaces_its_hold():
+    eng = _hold_engine("until press")
+    eng.advance(200)
+    eng.start("a", frames({"0,0": RED}, {"1,0": GREEN}), 1, now=200, hold="until press")
+    assert eng.held == [] and eng.running == ["a"]
