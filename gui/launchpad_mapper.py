@@ -806,7 +806,7 @@ class MainWindow(QMainWindow):
             if sel:
                 inten = picker.get_selected_intensity()
                 frame.setdefault("pads", {})[pad_key(pad)] = {"color": sel, "intensity": inten}
-                self._last_color, self._last_intensity = sel, inten
+                self._remember_color(sel, inten)
             else:
                 frame.setdefault("pads", {}).pop(pad_key(pad), None)
         else:
@@ -834,10 +834,14 @@ class MainWindow(QMainWindow):
         accepted = picker.exec() == QDialog.Accepted
         self._sync_custom_colors()
         if accepted and picker.get_selected_color():
-            self._brush = (picker.get_selected_color(), picker.get_selected_intensity())
-            self._last_color, self._last_intensity = self._brush
-            self._show_brush()
+            self._remember_color(picker.get_selected_color(), picker.get_selected_intensity())
             self.paint_btn.setChecked(True)  # picking a brush means you want to paint
+
+    def _remember_color(self, color: str, intensity: str):
+        """A color was picked in either editor: later pickers start on it and the brush follows it."""
+        self._last_color, self._last_intensity = color, intensity
+        self._brush = (color, intensity)
+        self._show_brush()
 
     def _show_brush(self):
         color, inten = self._brush
@@ -1481,7 +1485,7 @@ class MainWindow(QMainWindow):
         self._sync_custom_colors()
         if accepted:
             if dlg.picked:
-                self._last_color, self._last_intensity = dlg.picked
+                self._remember_color(*dlg.picked)
             pads = self.layer_set.active_pads
             new_map = dlg.result_mapping()
             if new_map is None:

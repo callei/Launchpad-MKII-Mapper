@@ -515,3 +515,27 @@ def test_clicking_the_animation_grid_without_a_frame_explains_why(win):
     win.anim_pad_buttons[(0, 0)].click()
     assert win.statusBar().currentMessage() == "Add a frame first"
     assert win.animations["empty"] == {"frames": []}
+
+
+def test_brush_follows_the_last_color_picked_in_either_editor(win, lpm, monkeypatch):
+    import widgets
+
+    monkeypatch.setattr(lpm, "ColorPickerPopup", _FakePicker)
+    monkeypatch.setattr(widgets, "ColorPickerPopup", _FakePicker)
+    _FakePicker.opened, _FakePicker.result = [], ("#00ff00", "low")
+    _anim_with_frame(win, {})
+    win._edit_animation_pad((0, 0))  # picker in the animation editor
+    assert win._brush == ("#00ff00", "low") and "#00ff00" in win.brush_btn.text()
+    assert not win.paint_btn.isChecked()  # following a pick doesn't switch paint mode on
+
+    _FakePicker.result = ("#0000ff", "high")
+    real_exec = widgets.PadEditorDialog.exec
+
+    def pick_then_ok(dlg):
+        dlg.pick_color()
+        QTimer.singleShot(0, dlg.accept)
+        return real_exec(dlg)
+
+    monkeypatch.setattr(widgets.PadEditorDialog, "exec", pick_then_ok)
+    win.edit_pad((0, 0))  # picker in the mapping editor
+    assert win._brush == ("#0000ff", "high")
