@@ -412,7 +412,7 @@ class MainWindow(QMainWindow):
         self.del_layer_btn = QPushButton("−")
         self.del_layer_btn.setToolTip("Delete layer")
         self.del_layer_btn.clicked.connect(self.delete_current_layer)
-        self.clear_layer_btn = QPushButton("⌫")
+        self.clear_layer_btn = QPushButton("Clear")
         self.clear_layer_btn.setToolTip("Clear layer (keeps the ◀ ▶ layer-nav pads)")
         self.clear_layer_btn.clicked.connect(self.clear_current_layer)
         layer_btn_row.addWidget(self.add_layer_btn)
