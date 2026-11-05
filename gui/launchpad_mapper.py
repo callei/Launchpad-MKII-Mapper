@@ -151,6 +151,9 @@ class MainWindow(QMainWindow):
         self._drag_pos: QPoint | None = None
         self.current_animation = None
         self.current_frame_index = 0
+        # Last color + intensity picked in either editor; pickers for uncolored pads start on it
+        self._last_color: str | None = None
+        self._last_intensity = "medium"
         # Animation playback: the engine plays runs, one timer ticks it, the painter writes the LEDs
         self.anim = AnimationEngine()
         self.leds = LedPainter()
@@ -766,8 +769,15 @@ class MainWindow(QMainWindow):
         if idx >= len(frames):
             return
         frame = frames[idx]
-        # Use the enhanced color picker with intensity
-        picker = ColorPickerPopup(initial_color=None, original_color=None, parent=self, initial_intensity="medium")
+        # Start on this pad's color, else on the last color picked
+        cell = frame.get("pads", {}).get(pad_key(pad))
+        if isinstance(cell, dict) and cell.get("color"):
+            color, inten = cell["color"], padmap.intensity_name(cell.get("intensity", "medium"))
+        elif isinstance(cell, str):
+            color, inten = cell, "medium"
+        else:
+            color, inten = self._last_color, self._last_intensity
+        picker = ColorPickerPopup(initial_color=color, original_color=color, parent=self, initial_intensity=inten)
         accepted = picker.exec() == QDialog.Accepted
         self._sync_custom_colors()
         if accepted:
@@ -775,6 +785,7 @@ class MainWindow(QMainWindow):
             if sel:
                 inten = picker.get_selected_intensity()
                 frame.setdefault("pads", {})[pad_key(pad)] = {"color": sel, "intensity": inten}
+                self._last_color, self._last_intensity = sel, inten
             else:
                 frame.setdefault("pads", {}).pop(pad_key(pad), None)
         else:
@@ -1407,10 +1418,19 @@ class MainWindow(QMainWindow):
 
     def edit_pad(self, pad):
         mapping = self.get_pad_mapping(pad)
-        dlg = PadEditorDialog(pad, mapping, self, animation_names=sorted(self.animations.keys()))
+        dlg = PadEditorDialog(
+            pad,
+            mapping,
+            self,
+            animation_names=sorted(self.animations.keys()),
+            last_color=self._last_color,
+            last_intensity=self._last_intensity,
+        )
         accepted = dlg.exec() == QDialog.Accepted
         self._sync_custom_colors()
         if accepted:
+            if dlg.picked:
+                self._last_color, self._last_intensity = dlg.picked
             pads = self.layer_set.active_pads
             new_map = dlg.result_mapping()
             if new_map is None:

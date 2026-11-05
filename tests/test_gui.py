@@ -407,3 +407,58 @@ def test_unchanged_custom_colors_do_not_dirty_the_config(win, monkeypatch):
     monkeypatch.setattr(win, "mark_dirty", lambda: dirty.append(1))
     win._sync_custom_colors()
     assert dirty == []
+
+
+class _FakePicker:
+    """Stands in for ColorPickerPopup: records what it opened with, returns `result` as the pick."""
+
+    opened = []
+    result = ("#00ff00", "high")
+
+    def __init__(self, initial_color, original_color, parent=None, initial_intensity=None):
+        _FakePicker.opened.append((initial_color, initial_intensity))
+
+    def exec(self):
+        return QDialog.Accepted
+
+    def get_selected_color(self):
+        return _FakePicker.result[0]
+
+    def get_selected_intensity(self):
+        return _FakePicker.result[1]
+
+
+def _anim_with_frame(win, pads):
+    win.animations["a"] = {"frames": [{"duration": 100, "pads": pads}]}
+    win.animation_list.addItem("a")
+    win.animation_list.setCurrentRow(win.animation_list.count() - 1)
+
+
+def test_animation_picker_opens_on_the_pads_color_else_the_last_pick(win, lpm, monkeypatch):
+    monkeypatch.setattr(lpm, "ColorPickerPopup", _FakePicker)
+    _FakePicker.opened = []
+    _anim_with_frame(win, {"0,0": {"color": "#ff0000", "intensity": "low"}})
+    win._edit_animation_pad((0, 0))
+    win._edit_animation_pad((1, 1))  # empty pad: starts on the green just picked
+    assert _FakePicker.opened == [("#ff0000", "low"), ("#00ff00", "high")]
+
+
+def test_mapping_picker_starts_on_the_last_pick_for_an_uncolored_pad(win, monkeypatch):
+    import widgets
+
+    monkeypatch.setattr(widgets, "ColorPickerPopup", _FakePicker)
+    _FakePicker.opened = []
+    win._last_color, win._last_intensity = "#0000ff", "low"
+    real_exec = widgets.PadEditorDialog.exec
+
+    def pick_then_ok(dlg):
+        dlg.pick_color()
+        QTimer.singleShot(0, dlg.accept)
+        return real_exec(dlg)
+
+    monkeypatch.setattr(widgets.PadEditorDialog, "exec", pick_then_ok)
+    win.edit_pad((0, 0))
+    assert _FakePicker.opened == [("#0000ff", "low")]
+    assert (win._last_color, win._last_intensity) == ("#00ff00", "high")
+    win.edit_pad((0, 0))  # now colored: starts on its own color
+    assert _FakePicker.opened[-1] == ("#00ff00", "high")

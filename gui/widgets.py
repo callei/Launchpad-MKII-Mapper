@@ -786,10 +786,14 @@ class AppPickerDialog(QDialog):
 
 
 class PadEditorDialog(FramelessPopup):
-    def __init__(self, pad, mapping, parent=None, animation_names=None):
+    def __init__(self, pad, mapping, parent=None, animation_names=None, last_color=None, last_intensity="medium"):
         super().__init__(title=f"Edit Pad ({pad[0]},{pad[1]})", parent=parent)
         self.pad = pad
         self.mapping = mapping
+        # The picker starts on the pad's color, else on the last one picked; `picked` is (color, intensity)
+        # once this dialog's picker returned a color
+        self._last_color, self._last_intensity = last_color, last_intensity
+        self.picked = None
         # Use content layout of frameless popup
         layout = self.content_layout()
         # Action type
@@ -1050,12 +1054,12 @@ class PadEditorDialog(FramelessPopup):
 
     def pick_color(self):
         # Pass current (hidden) intensity into the picker and sync back on accept
-        try:
-            init_inten = (self.intensity_select.currentText() or "medium").lower()
-        except Exception:
-            init_inten = "medium"
+        if self.selected_color:
+            init_color, init_inten = self.selected_color, (self.intensity_select.currentText() or "medium")
+        else:
+            init_color, init_inten = self._last_color, self._last_intensity
         picker = ColorPickerPopup(
-            initial_color=self.selected_color,
+            initial_color=init_color,
             original_color=self.selected_color,
             parent=self,
             initial_intensity=init_inten,
@@ -1068,6 +1072,8 @@ class PadEditorDialog(FramelessPopup):
                     self.intensity_select.setCurrentText(inten)
             except Exception:
                 pass
+            if self.selected_color:
+                self.picked = (self.selected_color, self.intensity_select.currentText())
             self._show_selected_color()
 
     def _show_selected_color(self):
