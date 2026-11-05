@@ -1060,7 +1060,9 @@ class PadEditorDialog(FramelessPopup):
 
     def _show_selected_color(self):
         """Preview the chosen color (as the pad will show it) on the color button."""
-        rgb = padmap.color_rgb({"color": self.selected_color, "intensity": self.intensity_select.currentText()})
+        rgb = padmap.color_rgb(
+            {"color": self.selected_color, "intensity": self.intensity_select.currentText()}, screen=True
+        )
         if rgb is None:
             self.color_btn.setText("Pick Color (none)")
             self.color_btn.setStyleSheet("")

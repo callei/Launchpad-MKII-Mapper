@@ -372,3 +372,13 @@ def test_until_press_hold_ends_on_any_press(win):
     win.on_pad_press((5, 5))  # unmapped pad
     assert win.anim.held == []
     assert win.port.controller.colors[-1] == ((0, 0), (0, 0, 0))
+
+
+def test_both_grids_show_intensity(win):
+    win.layers["main"]["pads"]["0,0"] = {"type": "color", "color": "#ffffff", "intensity": "low"}
+    win.update_grid()
+    assert "#3f3f3f" in win.pad_buttons[(0, 0)].styleSheet()
+    win.animations["a"] = {"frames": [{"duration": 100, "pads": {"0,0": {"color": "#ffffff", "intensity": "low"}}}]}
+    win.animation_list.addItem("a")
+    win.animation_list.setCurrentRow(win.animation_list.count() - 1)
+    assert "#3f3f3f" in win.anim_pad_buttons[(0, 0)].styleSheet()

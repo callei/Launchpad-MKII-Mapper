@@ -165,3 +165,13 @@ def test_animation_hold_round_trips_and_defaults_to_clear():
     assert PadMapping.from_dict(raw).to_dict() == raw
     assert "hold" not in PadMapping.from_dict({"type": "animation", "name": "x", "hold": "clear"}).to_dict()
     assert PadMapping.from_dict({"type": "animation", "name": "x", "hold": "bogus"}).hold == "clear"
+
+
+def test_screen_colors_dim_harder_than_the_hardware():
+    from launchpad.mapping import screen_hex
+
+    assert color_rgb({"color": "#ffffff", "intensity": "low"}) == (102, 102, 102)  # hardware unchanged
+    assert screen_hex({"color": "#ffffff", "intensity": "low"}) == "#3f3f3f"
+    assert screen_hex({"color": "#ffffff", "intensity": "medium"}) == "#8c8c8c"
+    assert screen_hex({"color": "#ffffff", "intensity": "high"}) == "#ffffff"
+    assert screen_hex(None) is None

@@ -53,7 +53,7 @@ def test_color_button_shows_picked_color_before_ok(editor, monkeypatch):
     assert "#" not in dlg.color_btn.text()
     dlg.pick_color()
     assert "#00ff00" in dlg.color_btn.text()
-    assert "rgb(0,178,0)" in dlg.color_btn.styleSheet()  # medium = 70%, as the pad shows it
+    assert "rgb(0,140,0)" in dlg.color_btn.styleSheet()  # medium = 55% on screen, as the pad shows it
     assert dlg.result_mapping()["color"] == "#00ff00"
 
 

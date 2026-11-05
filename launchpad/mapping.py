@@ -30,6 +30,8 @@ HOLD_MODES = (HOLD_CLEAR, HOLD_FOREVER, HOLD_UNTIL_PRESS, HOLD_UNTIL_ANIMATION)
 
 INTENSITIES = ("low", "medium", "high")
 _INTENSITY_FACTORS = {"low": 0.4, "medium": 0.7, "high": 1.0}
+# On screen the hardware's steps are barely visible, so the GUI dims harder
+_SCREEN_INTENSITY_FACTORS = {"low": 0.25, "medium": 0.55, "high": 1.0}
 _LEGACY_INTENSITIES = {1: "low", 2: "medium", 3: "high"}
 _LEGACY_TYPES = {
     "layer_nav": LAYER_NAV,
@@ -88,10 +90,11 @@ def intensity_name(raw) -> str:
     return _LEGACY_INTENSITIES.get(raw, "medium") if isinstance(raw, int) and not isinstance(raw, bool) else "medium"
 
 
-def color_rgb(spec) -> tuple[int, int, int] | None:
+def color_rgb(spec, screen: bool = False) -> tuple[int, int, int] | None:
     """RGB (0-255) for a frame cell or mapping: "#rrggbb", or a dict with "color" and optional "intensity".
 
-    Intensity scales the color (default medium). None when there is no valid color.
+    Intensity scales the color (default medium); `screen` uses the stronger on-screen steps.
+    None when there is no valid color.
     """
     if isinstance(spec, dict):
         color, intensity = spec.get("color"), intensity_name(spec.get("intensity", "medium"))
@@ -99,15 +102,21 @@ def color_rgb(spec) -> tuple[int, int, int] | None:
         color, intensity = spec, "medium"
     if not (isinstance(color, str) and _HEX_COLOR.fullmatch(color)):
         return None
-    f = _INTENSITY_FACTORS[intensity]
+    f = (_SCREEN_INTENSITY_FACTORS if screen else _INTENSITY_FACTORS)[intensity]
     return tuple(min(255, int(int(color[i : i + 2], 16) * f)) for i in (1, 3, 5))
 
 
-def pad_colors(pads) -> dict[tuple[int, int], tuple[int, int, int]]:
+def screen_hex(spec) -> str | None:
+    """ "#rrggbb" for showing a cell or mapping on screen (on-screen intensity applied), or None."""
+    rgb = color_rgb(spec, screen=True)
+    return None if rgb is None else "#%02x%02x%02x" % rgb
+
+
+def pad_colors(pads, screen: bool = False) -> dict[tuple[int, int], tuple[int, int, int]]:
     """RGB per pad for a layer's {"x,y": mapping} dict; pads without a valid color are left out."""
     colors = {}
     for key, mapping in pads.items() if isinstance(pads, dict) else ():
-        pad, rgb = parse_pad_key(key), color_rgb(mapping) if isinstance(mapping, dict) else None
+        pad, rgb = parse_pad_key(key), color_rgb(mapping, screen) if isinstance(mapping, dict) else None
         if pad is not None and rgb is not None:
             colors[pad] = rgb
     return colors

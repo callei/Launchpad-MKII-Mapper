@@ -744,7 +744,7 @@ class MainWindow(QMainWindow):
             btn = self.anim_pad_buttons.get(parse_pad_key(key))
             if btn:
                 # col may be a hex string or a dict {color: "#rrggbb", intensity: "low|medium|high"}
-                btn.update_color(col.get("color") if isinstance(col, dict) else col)
+                btn.update_color(padmap.screen_hex(col))
 
     def _edit_animation_pad(self, pad):
         if not self.current_animation:
@@ -1409,9 +1409,10 @@ class MainWindow(QMainWindow):
 
     def update_grid(self):
         """Show the active layer's colors (intensity applied) on screen and repaint every Launchpad pad."""
-        base = padmap.pad_colors(self.layer_set.active_pads)
+        pads = self.layer_set.active_pads
+        base = padmap.pad_colors(pads)
         for pad, btn in self.pad_buttons.items():
-            btn.update_color("#%02x%02x%02x" % base[pad] if pad in base else None)
+            btn.update_color(padmap.screen_hex(pads.get(pad_key(pad))))
         # Full repaint (each pad once, no clear first: clearing then repainting made the pads flicker)
         self.leds.paint(base=base, full=True)
 
